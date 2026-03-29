@@ -26,9 +26,7 @@ app.post("/connect", async (c) => {
   if (!sessionId || typeof sessionId !== "string") {
     return c.text("Invalid sessionId", 400);
   }
-  connectToOrchestrator(sessionId).catch((err) =>
-    logger.error(`[agent-worker] Unexpected WS error for session ${sessionId}:`, err),
-  );
+  connectToOrchestrator(sessionId);
   return c.body(null, 204);
 });
 

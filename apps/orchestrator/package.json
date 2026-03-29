@@ -12,13 +12,13 @@
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
-    "@sandbox/logger": "workspace:*",
     "@hono/node-server": "^1.13.7",
-    "@hono/node-ws": "^1.0.5",
     "@libsql/client": "^0.17.2",
+    "@sandbox/logger": "workspace:*",
     "dockerode": "^4.0.4",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.7.5"
+    "hono": "^4.7.5",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@sandbox/eslint-config": "workspace:*",

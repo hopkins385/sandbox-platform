@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { useElementSize, useThrottleFn, useWebSocket } from '@vueuse/core'
+import { useElementSize, useThrottleFn } from '@vueuse/core'
+import { io, type Socket } from 'socket.io-client'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import type { App, AppListResponse, QuestionItem, SendMessageResponse, WsClientMessage } from '@sandbox/types'
+import type { App, AppListResponse, QuestionItem, SendMessageResponse } from '@sandbox/types'
 
 function renderMarkdown(text: string): string {
   const html = marked.parse(text, { async: false }) as string
@@ -19,32 +20,6 @@ const currentApp = ref<App | null>(null)
 const previewUrl = ref('')
 const sessionLoading = ref(true)
 const sessionError = ref('')
-
-// Ping / pong keep-alive
-const PING_INTERVAL_MS = 5_000
-const PONG_TIMEOUT_MS = 12_000 // ~2 missed pings before marking disconnected
-const lastPongAt = ref(0)
-let pingIntervalId: ReturnType<typeof setInterval> | null = null
-
-function startPingInterval() {
-  stopPingInterval()
-  pingIntervalId = setInterval(() => {
-    if (wsStatus.value !== 'OPEN') return
-    if (lastPongAt.value > 0 && Date.now() - lastPongAt.value > PONG_TIMEOUT_MS) {
-      workerConnected.value = false
-    }
-    sendWs({ type: 'ping' })
-  }, PING_INTERVAL_MS)
-}
-
-function stopPingInterval() {
-  if (pingIntervalId !== null) {
-    clearInterval(pingIntervalId)
-    pingIntervalId = null
-  }
-}
-
-onUnmounted(stopPingInterval)
 
 // Chat state
 interface QuestionMessage {
@@ -63,6 +38,7 @@ type ChatMessage = BaseMessage | QuestionMessage
 const messages = ref<ChatMessage[]>([])
 const inputText = ref('')
 const isStreaming = ref(false)
+const socketConnected = ref(false)
 const workerConnected = ref(false)
 const messagesEl = ref<HTMLElement>()
 const iframeEl = ref<HTMLIFrameElement>()
@@ -71,37 +47,31 @@ const streamingBubbleIdx = ref<number | null>(null)
 // Per-question answers: msgId -> question -> Set<label>
 const questionAnswers = ref<Record<string, Record<string, Set<string>>>>({})
 
-// WebSocket — URL is set after session opens, immediate: false so it waits
-const wsUrl = ref<string | undefined>(undefined)
-const { send: wsSend, status: wsStatus } = useWebSocket(wsUrl, {
-  immediate: false,
-  autoReconnect: false,
-  onConnected(ws) {
-    ws.send(JSON.stringify({ type: 'ping' }))
-    lastPongAt.value = 0
-    startPingInterval()
-  },
-  onDisconnected() {
-    stopPingInterval()
-  },
-  onMessage(_ws, event) {
-    try {
-      const evt = JSON.parse(event.data as string) as SendMessageResponse
-      handleWsEvent(evt)
-      if (evt.type === 'text_delta') {
-        throttledScrollToBottom()
-      } else {
-        scrollToBottom()
-      }
-    } catch {
-      // ignore malformed frames
-    }
-  },
-  onError(_ws, event) {
-    messages.value.push({ role: 'agent', type: 'text', content: `WebSocket-Fehler: ${JSON.stringify(event)}` })
+let socket: Socket | null = null
+
+function connectSocket(sid: string) {
+  socket = io(config.public.apiBase, {
+    transports: ['websocket'],
+    auth: { role: 'browser', sessionId: sid },
+  })
+
+  socket.on('connect', () => { socketConnected.value = true })
+  socket.on('disconnect', () => {
+    socketConnected.value = false
+    workerConnected.value = false
     isStreaming.value = false
-  },
-})
+  })
+  socket.on('connect_error', () => { socketConnected.value = false })
+
+  socket.onAny((type: string, content: string) => {
+    const evt = { type, content: content ?? '' } as SendMessageResponse
+    handleWsEvent(evt)
+    if (type === 'text_delta') throttledScrollToBottom()
+    else scrollToBottom()
+  })
+}
+
+onUnmounted(() => { socket?.disconnect() })
 
 // Open session on mount
 onMounted(async () => {
@@ -136,10 +106,7 @@ onMounted(async () => {
     currentApp.value = session.app
     previewUrl.value = session.previewUrl
 
-    // Connect WebSocket now that we have a sessionId
-    const wsBase = config.public.apiBase.replace(/^http/, 'ws')
-    workerConnected.value = false
-    wsUrl.value = `${wsBase}/api/sessions/ws/${session.sessionId}`
+    connectSocket(session.sessionId)
   } catch (err) {
     sessionError.value = `Sitzung konnte nicht geöffnet werden: ${err instanceof Error ? err.message : String(err)}`
   } finally {
@@ -147,20 +114,16 @@ onMounted(async () => {
   }
 })
 
-function sendWs(msg: WsClientMessage) {
-  wsSend(JSON.stringify(msg))
-}
-
 function sendMessage() {
   const text = inputText.value.trim()
-  if (!text || isStreaming.value || wsStatus.value !== 'OPEN') return
+  if (!text || isStreaming.value || !socketConnected.value) return
 
   inputText.value = ''
   messages.value.push({ role: 'user', type: 'text', content: text })
   isStreaming.value = true
   scrollToBottom()
 
-  sendWs({ type: 'send', message: text })
+  socket?.emit('send', text)
 }
 
 function handleWsEvent(event: SendMessageResponse) {
@@ -206,7 +169,6 @@ function handleWsEvent(event: SendMessageResponse) {
       break
     case 'pong':
       workerConnected.value = true
-      lastPongAt.value = Date.now()
       break
     case 'worker_disconnected':
       workerConnected.value = false
@@ -226,7 +188,7 @@ function handleWsEvent(event: SendMessageResponse) {
 }
 
 function cancelMessage() {
-  sendWs({ type: 'cancel' })
+  socket?.emit('cancel')
   isStreaming.value = false
 }
 
@@ -268,7 +230,7 @@ async function submitAnswers(msg: QuestionMessage) {
   }
 
   msg.answered = true
-  sendWs({ type: 'answer', answers })
+  socket?.emit('answer', answers)
 }
 
 function scrollToBottom() {
@@ -380,27 +342,27 @@ const iframeHeight = computed(() => Math.round(containerHeight.value / zoomLevel
         <!-- Status bar -->
         <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-100 bg-gray-50 text-xs text-gray-500">
           <div>Online:</div>
-          <!-- Browser ↔ orchestrator WS -->
+          <!-- Browser ↔ orchestrator -->
           <span class="flex items-center gap-1.5">
             <span class="w-2 h-2 rounded-full flex-shrink-0" :class="{
-              'bg-emerald-500': wsStatus === 'OPEN',
-              'bg-amber-400 animate-pulse': wsStatus === 'CONNECTING',
-              'bg-red-400': wsStatus === 'CLOSED',
+              'bg-emerald-500': socketConnected,
+              'bg-amber-400 animate-pulse': !socketConnected && sessionId,
+              'bg-red-400': !socketConnected && !sessionId,
             }" />
-            <span v-if="wsStatus === 'OPEN'">Me</span>
-            <span v-else-if="wsStatus === 'CONNECTING'">Me Connecting…</span>
+            <span v-if="socketConnected">Me</span>
+            <span v-else-if="sessionId">Me Connecting…</span>
             <span v-else>Me Disconnected</span>
           </span>
           <span class="text-gray-200">|</span>
-          <!-- Worker WS -->
+          <!-- Worker -->
           <span class="flex items-center gap-1.5">
             <span class="w-2 h-2 rounded-full flex-shrink-0" :class="{
               'bg-emerald-500': workerConnected,
-              'bg-amber-400 animate-pulse': wsStatus === 'OPEN' && !workerConnected,
-              'bg-red-400': wsStatus !== 'OPEN' && !workerConnected,
+              'bg-amber-400 animate-pulse': socketConnected && !workerConnected,
+              'bg-red-400': !socketConnected && !workerConnected,
             }" />
             <span v-if="workerConnected">AI Agent</span>
-            <span v-else-if="wsStatus === 'OPEN'">AI Agent connecting…</span>
+            <span v-else-if="socketConnected">AI Agent connecting…</span>
             <span v-else>AI Agent offline</span>
           </span>
         </div>
