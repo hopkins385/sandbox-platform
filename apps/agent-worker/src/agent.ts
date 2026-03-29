@@ -151,7 +151,7 @@ export async function runAgent(
           model: "claude-sonnet-4-6",
           settingSources: ["user", "project"],
           permissionMode: "acceptEdits",
-          includePartialMessages: false,
+          includePartialMessages: true,
           systemPrompt: { type: "preset", preset: "claude_code" },
           allowedTools: [
             "Skill",

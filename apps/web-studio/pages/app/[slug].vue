@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { useElementSize, useThrottleFn, useWebSocket } from '@vueuse/core'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import type { App, AppListResponse, QuestionItem, SendMessageResponse, WsClientMessage } from '@sandbox/types'
+
+function renderMarkdown(text: string): string {
+  const html = marked.parse(text, { async: false }) as string
+  return DOMPurify.sanitize(html)
+}
 
 const route = useRoute()
 const slug = computed(() => route.params.slug as string)
@@ -420,17 +427,19 @@ const iframeHeight = computed(() => Math.round(containerHeight.value / zoomLevel
             </div>
 
             <!-- User message -->
-            <div v-else-if="msg.role === 'user'" class="flex justify-end">
+            <div v-else-if="msg.type !== 'question' && (msg as BaseMessage).role === 'user'" class="flex justify-end">
               <div class="max-w-[75%] bg-indigo-600 text-white text-sm rounded-2xl rounded-tr-sm px-4 py-2.5">
-                {{ msg.content }}
+                {{ (msg as BaseMessage).content }}
               </div>
             </div>
 
             <!-- Agent text message -->
             <div v-else-if="msg.type === 'text'" class="flex justify-start">
-              <div class="max-w-[75%] bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-tl-sm px-4 py-2.5">
-                {{ msg.content }}
-              </div>
+              <div v-if="i === streamingBubbleIdx"
+                class="max-w-[75%] bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-tl-sm px-4 py-2.5 whitespace-pre-wrap">{{ (msg as BaseMessage).content }}</div>
+              <div v-else
+                class="bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-tl-sm px-4 py-2.5 prose prose-sm prose-gray !max-w-[75%]"
+                v-html="renderMarkdown((msg as BaseMessage).content)" />
             </div>
 
             <!-- Screenshot message -->
@@ -480,7 +489,7 @@ const iframeHeight = computed(() => Math.round(containerHeight.value / zoomLevel
           </template>
 
           <!-- Typing indicator -->
-          <div v-if="isStreaming" class="flex justify-start">
+          <div v-if="isStreaming && streamingBubbleIdx === null" class="flex justify-start">
             <div class="bg-gray-100 rounded-2xl rounded-tl-sm px-4 py-2.5">
               <span class="flex gap-1">
                 <span class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
