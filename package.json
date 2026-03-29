@@ -2,7 +2,7 @@
   "name": "sandbox-platform",
   "private": true,
   "scripts": {
-    "dev": "dotenv -c -- turbo dev --filter=!@sandbox/nuxt-starter",
+    "dev": "dotenv -c -- turbo dev --filter=!@sandbox/nuxt-starter --filter=!@sandbox/agent-worker",
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck"
@@ -24,6 +24,14 @@
         "x64",
         "arm64"
       ]
-    }
+    },
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "better-sqlite3",
+      "cpu-features",
+      "esbuild",
+      "protobufjs",
+      "ssh2"
+    ]
   }
 }

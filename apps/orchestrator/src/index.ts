@@ -1,11 +1,14 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
+import { createNodeWebSocket } from "@hono/node-ws";
 import { reconcileApps } from "./container.js";
 import { appsRouter } from "./routes/apps.js";
-import { sessionsRouter } from "./routes/sessions.js";
+import { createSessionsRouter } from "./routes/sessions.js";
 
 const app = new Hono();
+
+const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
 app.use("*", cors({ origin: "http://localhost:3001" }));
 
@@ -16,11 +19,12 @@ app.use("*", async (c, next) => {
 });
 
 app.route("/api/apps", appsRouter);
-app.route("/api/sessions", sessionsRouter);
+app.route("/api/sessions", createSessionsRouter(upgradeWebSocket));
 
 const PORT = 4000;
 reconcileApps().then(() => {
-  serve({ fetch: app.fetch, port: PORT }, () => {
+  const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`Orchestrator running on :${PORT}`);
   });
+  injectWebSocket(server);
 });

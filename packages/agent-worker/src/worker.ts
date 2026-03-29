@@ -6,6 +6,8 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@sandbox/logger";
 import type { SendMessageResponse } from "@sandbox/types";
 
+logger.info(`[agent-worker] Starting agent worker...`);
+
 // Credential guard: the recommended pattern is to proxy all Claude API requests
 // through an external proxy (ANTHROPIC_BASE_URL) that injects the key, so the
 // sandbox container never holds the real credential.
@@ -83,7 +85,7 @@ app.post("/run", async (c) => {
     runId: string;
   }>();
 
-  logger.debug(
+  logger.info(
     `[agent-worker] Received /run request: runId=${runId} cwd=${cwd}`,
   );
 
@@ -169,17 +171,16 @@ app.post("/run", async (c) => {
       for await (const sdkMessage of agentQuery) {
         if (aborted) break;
         const { type, session_id, uuid } = sdkMessage;
-        logger.debug(
+        logger.info(
           `[agent-worker] SDK message: type=${type} session_id=${session_id} uuid=${uuid}`,
         );
         switch (type) {
           case "stream_event": {
             const event = sdkMessage.event;
-            if (
-              event.type === "content_block_delta" &&
-              event.delta.type === "text_delta"
-            ) {
-              await emit({ type: "text_delta", content: event.delta.text });
+            if (event.type === "content_block_delta") {
+              if (event.delta.type === "text_delta") {
+                await emit({ type: "text_delta", content: event.delta.text });
+              }
             }
             break;
           }

@@ -12,9 +12,10 @@
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
+    "@sandbox/logger": "workspace:*",
     "@hono/node-server": "^1.13.7",
+    "@hono/node-ws": "^1.0.5",
     "@libsql/client": "^0.17.2",
-    "@sandbox/types": "workspace:*",
     "dockerode": "^4.0.4",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.7.5"
@@ -22,8 +23,9 @@
   "devDependencies": {
     "@sandbox/eslint-config": "workspace:*",
     "@sandbox/tsconfig": "workspace:*",
+    "@sandbox/types": "workspace:*",
     "@types/dockerode": "^3.3.33",
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.0.0",
     "dotenv-cli": "^11.0.0",
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.2",

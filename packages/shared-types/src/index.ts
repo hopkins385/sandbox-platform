@@ -80,3 +80,9 @@ export interface CancelMessageRequest {
 export interface CancelMessageResponse {
   cancelled: boolean;
 }
+
+// WebSocket client → server message types
+export type WsClientMessage =
+  | { type: "send"; message: string }
+  | { type: "cancel" }
+  | { type: "answer"; answers: Record<string, string> };
