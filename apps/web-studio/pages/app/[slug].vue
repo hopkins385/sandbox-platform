@@ -13,6 +13,32 @@ const previewUrl = ref('')
 const sessionLoading = ref(true)
 const sessionError = ref('')
 
+// Ping / pong keep-alive
+const PING_INTERVAL_MS = 5_000
+const PONG_TIMEOUT_MS = 12_000 // ~2 missed pings before marking disconnected
+const lastPongAt = ref(0)
+let pingIntervalId: ReturnType<typeof setInterval> | null = null
+
+function startPingInterval() {
+  stopPingInterval()
+  pingIntervalId = setInterval(() => {
+    if (wsStatus.value !== 'OPEN') return
+    if (lastPongAt.value > 0 && Date.now() - lastPongAt.value > PONG_TIMEOUT_MS) {
+      workerConnected.value = false
+    }
+    sendWs({ type: 'ping' })
+  }, PING_INTERVAL_MS)
+}
+
+function stopPingInterval() {
+  if (pingIntervalId !== null) {
+    clearInterval(pingIntervalId)
+    pingIntervalId = null
+  }
+}
+
+onUnmounted(stopPingInterval)
+
 // Chat state
 interface QuestionMessage {
   id: string
@@ -45,6 +71,11 @@ const { send: wsSend, status: wsStatus } = useWebSocket(wsUrl, {
   autoReconnect: false,
   onConnected(ws) {
     ws.send(JSON.stringify({ type: 'ping' }))
+    lastPongAt.value = 0
+    startPingInterval()
+  },
+  onDisconnected() {
+    stopPingInterval()
   },
   onMessage(_ws, event) {
     try {
@@ -168,6 +199,7 @@ function handleWsEvent(event: SendMessageResponse) {
       break
     case 'pong':
       workerConnected.value = true
+      lastPongAt.value = Date.now()
       break
     case 'worker_disconnected':
       workerConnected.value = false
@@ -312,6 +344,7 @@ function resetZoom() {
 // Iframe content area dimensions (before scale)
 const iframeWidth = computed(() => viewportWidth.value)
 const iframeHeight = computed(() => Math.round(containerHeight.value / zoomLevel.value))
+
 </script>
 
 <template>

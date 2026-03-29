@@ -12,6 +12,7 @@ services:
     environment:
       - WORKER_SECRET=${WORKER_SECRET:-dev-secret}
       - ORCHESTRATOR_URL=http://host.docker.internal:4000
+      - WORKER_DEV=true
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

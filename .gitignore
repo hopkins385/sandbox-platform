@@ -6,6 +6,7 @@ dist/
 .nuxt/
 .output/
 .turbo/
+.worker-deploy/
 
 # Environment variables
 .env

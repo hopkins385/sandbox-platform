@@ -13,21 +13,21 @@
     <div v-else-if="error" class="text-red-500 text-sm">Fehler beim Laden der Apps.</div>
 
     <template v-else>
-      <section v-if="data?.owned.length">
+      <section v-if="visibleOwned.length">
         <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Eigene Apps</h2>
         <div class="grid grid-cols-3 gap-4 mb-8">
-          <AppCard v-for="app in data.owned" :key="app.id" :app="app" @deleted="removeApp" />
+          <AppCard v-for="app in visibleOwned" :key="app.id" :app="app" @deleting="onDeleting" @deleted="removeApp" />
         </div>
       </section>
 
-      <section v-if="data?.collaborations.length">
+      <section v-if="visibleCollaborations.length">
         <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Geteilte Apps</h2>
         <div class="grid grid-cols-3 gap-4">
-          <AppCard v-for="app in data.collaborations" :key="app.id" :app="app" @deleted="removeApp" />
+          <AppCard v-for="app in visibleCollaborations" :key="app.id" :app="app" @deleting="onDeleting" @deleted="removeApp" />
         </div>
       </section>
 
-      <div v-if="!data?.owned.length && !data?.collaborations.length" class="text-center text-gray-400 text-sm mt-12">
+      <div v-if="!visibleOwned.length && !visibleCollaborations.length" class="text-center text-gray-400 text-sm mt-12">
         Noch keine Apps vorhanden. Erstelle deine erste App!
       </div>
     </template>
@@ -64,14 +64,17 @@
 </template>
 
 <script setup lang="ts">
+import { useIntervalFn } from '@vueuse/core'
 import type { App, AppListResponse } from '@sandbox/types'
 
 const config = useRuntimeConfig()
 const router = useRouter()
 
-const { data, pending, error } = await useFetch<AppListResponse>(
+const { data, pending, error, refresh } = await useFetch<AppListResponse>(
   `${config.public.apiBase}/api/apps`
 )
+
+useIntervalFn(refresh, 3000)
 
 const showCreateModal = ref(false)
 const newAppName = ref('')
@@ -105,12 +108,17 @@ async function createApp() {
   }
 }
 
-function removeApp(id: string) {
-  if (data.value) {
-    data.value = {
-      owned: data.value.owned.filter(a => a.id !== id),
-      collaborations: data.value.collaborations.filter(a => a.id !== id),
-    }
-  }
+const deletingIds = ref(new Set<string>())
+
+function onDeleting(id: string) {
+  deletingIds.value = new Set(deletingIds.value).add(id)
 }
+
+function removeApp(id: string) {
+  deletingIds.value.delete(id)
+  deletingIds.value = new Set(deletingIds.value)
+}
+
+const visibleOwned = computed(() => data.value?.owned.filter(a => !deletingIds.value.has(a.id)) ?? [])
+const visibleCollaborations = computed(() => data.value?.collaborations.filter(a => !deletingIds.value.has(a.id)) ?? [])
 </script>

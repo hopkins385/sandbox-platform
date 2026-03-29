@@ -1,5 +1,7 @@
 export default defineNuxtConfig({
-  modules: ['@nuxtjs/tailwindcss'],
   devtools: { enabled: false },
-  compatibilityDate: '2024-11-01',
-})
+  telemetry: false,
+  ssr: false,
+  compatibilityDate: "2024-11-01",
+  modules: ["@nuxtjs/tailwindcss"],
+});

@@ -4,15 +4,27 @@ import type { UpgradeWebSocket } from "hono/ws";
 import { db } from "../db/index.js";
 import { apps } from "../db/schema.js";
 import { inspectPorts } from "../container.js";
-import { workerUrl, workerAuthHeaders } from "../worker.js";
-import { rowToApp } from "./apps.js";
+import { workerUrl, workerAuthHeaders, waitForWorker } from "../worker.js";
 import type {
   SessionOpenRequest,
   SessionOpenResponse,
   WsClientMessage,
   SendMessageResponse,
+  App,
 } from "@sandbox/types";
 import { logger } from "@sandbox/logger";
+
+function rowToApp(row: typeof apps.$inferSelect): App {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    ownerId: row.ownerId,
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
 
 // Minimal interface for a connected WS peer so we don't depend on a specific WS class
 interface WsPeer {
@@ -29,6 +41,53 @@ interface SessionRecord {
 }
 
 const sessionStore = new Map<string, SessionRecord>();
+
+// Apps whose containers are being intentionally restarted via the API.
+// While an app is in this set the onClose auto-reconnect is suppressed so that
+// reconnectWorkerSessions (which knows the new port) handles it exclusively.
+const restartingApps = new Set<string>();
+
+export function markAppRestarting(appId: string): void {
+  restartingApps.add(appId);
+}
+
+export function unmarkAppRestarting(appId: string): void {
+  restartingApps.delete(appId);
+}
+
+/**
+ * Called after a container is recreated. Clears the stale worker WS for every
+ * active session belonging to that app and re-calls /connect on the new worker
+ * so it rejoins the session channel.
+ */
+export async function reconnectWorkerSessions(appId: string): Promise<void> {
+  try {
+    const { port4001 } = await inspectPorts(appId);
+    for (const [sessionId, session] of sessionStore) {
+      if (session.appId !== appId) continue;
+      session.workerWs = null;
+      session.port4001 = port4001;
+      session.browserWs?.send(
+        JSON.stringify({
+          type: "worker_disconnected",
+          content: "",
+        } satisfies SendMessageResponse),
+      );
+      fetch(`${workerUrl(appId, port4001)}/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...workerAuthHeaders() },
+        body: JSON.stringify({ sessionId }),
+      }).catch((err) =>
+        logger.warn(
+          `[orchestrator] /connect re-call failed for session ${sessionId} after restart:`,
+          err,
+        ),
+      );
+    }
+  } finally {
+    restartingApps.delete(appId);
+  }
+}
 
 export function createSessionsRouter(upgradeWebSocket: UpgradeWebSocket) {
   const router = new Hono();
@@ -214,6 +273,30 @@ export function createSessionsRouter(upgradeWebSocket: UpgradeWebSocket) {
                 } satisfies SendMessageResponse),
               );
               session.workerWs = null;
+              // If the browser is still connected and this is NOT an intentional
+              // API restart (which calls reconnectWorkerSessions itself), the
+              // container may have self-restarted — poll the worker and reconnect.
+              if (session.browserWs && !restartingApps.has(session.appId)) {
+                waitForWorker(session.appId, session.port4001)
+                  .then(() => {
+                    if (!session.browserWs) return; // browser left while we waited
+                    fetch(`${workerUrl(session.appId, session.port4001)}/connect`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", ...workerAuthHeaders() },
+                      body: JSON.stringify({ sessionId }),
+                    }).catch((err) =>
+                      logger.warn(
+                        `[orchestrator] Auto-reconnect /connect failed for session ${sessionId}:`,
+                        err,
+                      ),
+                    );
+                  })
+                  .catch(() =>
+                    logger.warn(
+                      `[orchestrator] Worker did not recover for session ${sessionId}`,
+                    ),
+                  );
+              }
             }
           }
         },

@@ -3,18 +3,28 @@ FROM node:24-slim AS worker-builder
 WORKDIR /build
 RUN npm install -g pnpm
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
-COPY packages/agent-worker ./packages/agent-worker
+COPY apps/agent-worker ./apps/agent-worker
 COPY packages/logger ./packages/logger
-COPY packages/nuxt-starter ./packages/nuxt-starter
 COPY packages/shared-types ./packages/shared-types
 COPY packages/tsconfig ./packages/tsconfig
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @sandbox/logger build
+RUN pnpm --filter @sandbox/shared-types build
+# Include devDependencies so tsx is available for dev hot-reload
+RUN pnpm deploy --filter @sandbox/agent-worker --legacy /build/agent-worker-deploy
 RUN pnpm --filter @sandbox/agent-worker build
-RUN pnpm deploy --filter @sandbox/agent-worker --prod --legacy /build/agent-worker-deploy
+
+# Stage 2: build nuxt-starter
+FROM node:24-slim AS starter-builder
+WORKDIR /build
+RUN npm install -g pnpm
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY packages/nuxt-starter ./packages/nuxt-starter
+COPY packages/tsconfig ./packages/tsconfig
+RUN pnpm install --frozen-lockfile
 RUN pnpm deploy --filter @sandbox/nuxt-starter --prod --legacy /build/nuxt-starter-deploy
 
-# Stage 2: runtime image
+# Stage 3: runtime image
 FROM node:24-slim
 
 RUN apt-get update && apt-get install -y \
@@ -25,15 +35,11 @@ RUN apt-get update && apt-get install -y \
 
 RUN npm install -g pnpm
 
-# Install Playwright system deps + Chromium for MCP browser agent
-RUN npx playwright install-deps chromium \
-    && npx playwright install chromium
-
-# Install agent-worker
+# Install worker — fully baked in. In dev, src/ is overridden by a bind mount.
 COPY --from=worker-builder /build/agent-worker-deploy /usr/local/lib/agent-worker
 
 # Install nuxt-starter template
-COPY --from=worker-builder /build/nuxt-starter-deploy /opt/nuxt-starter
+COPY --from=starter-builder /build/nuxt-starter-deploy /opt/nuxt-starter
 
 # Install init script
 COPY docker/sandbox-image/scripts/init-app.sh /usr/local/bin/init-app.sh

@@ -2,7 +2,7 @@
   "name": "sandbox-platform",
   "private": true,
   "scripts": {
-    "dev": "dotenv -c -- turbo dev --filter=!@sandbox/nuxt-starter --filter=!@sandbox/agent-worker",
+    "dev": "dotenv -c -- turbo dev --filter=!@sandbox/nuxt-starter",
     "build": "turbo build",
     "build:sandbox": "./scripts/build-sandbox.sh",
     "lint": "turbo lint",

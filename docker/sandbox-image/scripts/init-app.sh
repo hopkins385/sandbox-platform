@@ -12,8 +12,15 @@ if [ ! -f "${APP_DIR}/package.json" ]; then
   cp -r "${STARTER_DIR}/." "${APP_DIR}/"
 fi
 
+WORKER_DIR="/usr/local/lib/agent-worker"
+
 echo "[init-app] Starting agent-worker on port 4001..."
-node /usr/local/lib/agent-worker/dist/worker.js &
+if [ "${WORKER_DEV:-}" = "true" ]; then
+  # Dev: src/ is bind-mounted from the host; deps and tsx are baked into the image
+  cd "${WORKER_DIR}" && node_modules/.bin/tsx --watch src/worker.ts &
+else
+  node "${WORKER_DIR}/dist/worker.js" &
+fi
 WORKER_PID=$!
 
 echo "[init-app] Starting Nuxt dev server on port 3000..."
