@@ -1,0 +1,34 @@
+# Dependencies
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/.nuxt/
+**/.output/
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+
+# Editor / IDE
+**/.idea/
+**/.vscode/
+**/*.swp
+**/*.swo
+
+# Logs
+**/npm-debug.log*
+**/pnpm-debug.log*
+**/*.log
+
+# Git
+.git/
+.gitignore
+
+# Docker
+.dockerignore
+
+# Env files
+**/.env
+**/.env.*
+!**/.env.example

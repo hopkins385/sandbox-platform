@@ -1,0 +1,19 @@
+services:
+  sandbox:
+    build:
+      context: .
+      dockerfile: docker/sandbox-image/Dockerfile
+    ports:
+      - "3000:3000"
+      - "4001:4001"
+    env_file:
+      - .env
+    environment:
+      - WORKER_SECRET=${WORKER_SECRET:-dev-secret}
+    volumes:
+      # Persist /app between restarts so agent edits survive
+      - sandbox-app:/app
+    restart: unless-stopped
+
+volumes:
+  sandbox-app:

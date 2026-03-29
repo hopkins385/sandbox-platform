@@ -1,0 +1,154 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "agent-worker",
+    "version": "1.0.0",
+    "description": "HTTP API exposed by the agent-worker inside each sandbox container."
+  },
+  "servers": [
+    { "url": "http://localhost:4001", "description": "Local sandbox container" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "WORKER_SECRET value set on the container"
+      }
+    },
+    "schemas": {
+      "RunRequest": {
+        "type": "object",
+        "required": ["runId", "prompt"],
+        "properties": {
+          "runId": { "type": "string", "pattern": "^[\\w-]{1,128}$", "example": "test-1" },
+          "prompt": { "type": "string", "example": "Create a hello world HTML page at /app/index.html" },
+          "cwd": { "type": "string", "default": "/app", "example": "/app" }
+        }
+      },
+      "AnswerRequest": {
+        "type": "object",
+        "required": ["runId", "answers"],
+        "properties": {
+          "runId": { "type": "string", "example": "test-1" },
+          "answers": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "example": { "What framework should I use?": "Vanilla HTML, no framework" }
+          }
+        }
+      },
+      "CancelRequest": {
+        "type": "object",
+        "required": ["runId"],
+        "properties": {
+          "runId": { "type": "string", "example": "test-1" }
+        }
+      },
+      "SseEvent": {
+        "type": "object",
+        "required": ["type", "content"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["text", "status", "screenshot", "question", "result", "error", "done"]
+          },
+          "content": { "type": "string" }
+        }
+      }
+    }
+  },
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Returns ok:true. No authentication required.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Worker is healthy",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } },
+                "example": { "ok": true }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/run": {
+      "post": {
+        "summary": "Start an agent run (SSE stream)",
+        "description": "Streams Server-Sent Events. Each event data field is a JSON-encoded SseEvent. The stream ends with a done event.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RunRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SSE stream of agent events",
+            "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/SseEvent" } } }
+          },
+          "400": { "description": "Invalid runId or cwd" },
+          "401": { "description": "Missing or invalid WORKER_SECRET" }
+        }
+      }
+    },
+    "/answer": {
+      "post": {
+        "summary": "Answer an AskUserQuestion",
+        "description": "Unblocks a paused run waiting for user input.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/AnswerRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Answer delivered",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "delivered": { "type": "boolean" } } },
+                "example": { "delivered": true }
+              }
+            }
+          },
+          "404": {
+            "description": "No pending question for this runId",
+            "content": { "application/json": { "example": { "delivered": false } } }
+          },
+          "401": { "description": "Missing or invalid WORKER_SECRET" }
+        }
+      }
+    },
+    "/cancel": {
+      "post": {
+        "summary": "Cancel an active run",
+        "description": "Aborts the SSE stream for the given runId.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CancelRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run cancelled",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "cancelled": { "type": "boolean" } } },
+                "example": { "cancelled": true }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid WORKER_SECRET" }
+        }
+      }
+    }
+  }
+}

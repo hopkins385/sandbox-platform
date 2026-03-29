@@ -1,0 +1,52 @@
+services:
+  orchestrator:
+    image: ghcr.io/org/orchestrator:${ORCHESTRATOR_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - WORKER_SECRET=${WORKER_SECRET}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=100m
+    mem_limit: 1g
+    pids_limit: 100
+    networks:
+      - sandbox-net
+    restart: unless-stopped
+
+  web-studio:
+    image: ghcr.io/org/web-studio:${WEB_STUDIO_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: apps/web-studio/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - API_BASE=http://orchestrator:4000
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=100m
+    mem_limit: 512m
+    pids_limit: 100
+    networks:
+      - sandbox-net
+    depends_on:
+      - orchestrator
+    restart: unless-stopped
+
+networks:
+  sandbox-net:
+    external: true

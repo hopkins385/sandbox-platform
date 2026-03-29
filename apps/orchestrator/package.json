@@ -1,0 +1,30 @@
+{
+  "name": "@sandbox/orchestrator",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@sandbox/types": "workspace:*",
+    "@hono/node-server": "^1.13.7",
+    "better-sqlite3": "^11.7.0",
+    "dockerode": "^4.0.4",
+    "hono": "^4.7.5"
+  },
+  "devDependencies": {
+    "@sandbox/tsconfig": "workspace:*",
+    "@sandbox/eslint-config": "workspace:*",
+    "typescript": "^5.7.2",
+    "@types/node": "^22.0.0",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/dockerode": "^3.3.33",
+    "tsx": "^4.19.2"
+  }
+}
