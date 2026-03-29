@@ -3,7 +3,6 @@ export interface App {
   slug: string;
   name: string;
   ownerId: string;
-  containerId?: string;
   status: "creating" | "running" | "stopped" | "error";
   createdAt: string;
   updatedAt: string;
@@ -55,6 +54,7 @@ export interface QuestionItem {
 export interface SendMessageResponse {
   type:
     | "text"
+    | "text_delta"
     | "status"
     | "error"
     | "done"

@@ -83,6 +83,10 @@ app.post("/run", async (c) => {
     runId: string;
   }>();
 
+  logger.debug(
+    `[agent-worker] Received /run request: runId=${runId} cwd=${cwd}`,
+  );
+
   // Validate inputs at the boundary before they reach the agent or filesystem.
   if (!/^[\w-]{1,128}$/.test(runId)) {
     return c.text("Invalid runId", 400);
@@ -132,6 +136,7 @@ app.post("/run", async (c) => {
           model: "claude-sonnet-4-6",
           settingSources: ["user", "project"],
           permissionMode: "acceptEdits",
+          includePartialMessages: true, // Stream partial messages for more responsive UI updates
           systemPrompt: {
             type: "preset",
             preset: "claude_code", // Use Claude Code's system prompt
@@ -164,7 +169,20 @@ app.post("/run", async (c) => {
       for await (const sdkMessage of agentQuery) {
         if (aborted) break;
         const { type, session_id, uuid } = sdkMessage;
+        logger.debug(
+          `[agent-worker] SDK message: type=${type} session_id=${session_id} uuid=${uuid}`,
+        );
         switch (type) {
+          case "stream_event": {
+            const event = sdkMessage.event;
+            if (
+              event.type === "content_block_delta" &&
+              event.delta.type === "text_delta"
+            ) {
+              await emit({ type: "text_delta", content: event.delta.text });
+            }
+            break;
+          }
           case "assistant": {
             const textBlock = sdkMessage.message.content.find(
               (b: { type: string }) => b.type === "text",

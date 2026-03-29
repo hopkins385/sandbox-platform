@@ -10,12 +10,21 @@
       </span>
     </div>
     <p class="text-xs text-gray-400 mb-4 font-mono">{{ app.slug }}</p>
-    <NuxtLink
-      :to="`/app/${app.slug}`"
-      class="block w-full text-center px-3 py-1.5 text-sm font-medium text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors"
-    >
-      Öffnen
-    </NuxtLink>
+    <div class="flex gap-2">
+      <NuxtLink
+        :to="`/app/${app.slug}`"
+        class="flex-1 text-center px-3 py-1.5 text-sm font-medium text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors"
+      >
+        Öffnen
+      </NuxtLink>
+      <button
+        class="px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        :disabled="deleting"
+        @click="deleteApp"
+      >
+        {{ deleting ? '...' : 'Löschen' }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -23,6 +32,10 @@
 import type { App } from '@sandbox/types'
 
 const props = defineProps<{ app: App }>()
+const emit = defineEmits<{ deleted: [id: string] }>()
+
+const config = useRuntimeConfig()
+const deleting = ref(false)
 
 const statusClass = computed(() => ({
   'bg-green-100 text-green-700': props.app.status === 'running',
@@ -37,4 +50,19 @@ const statusLabel = computed(() => ({
   creating: 'Wird erstellt',
   error: 'Fehler',
 }[props.app.status]))
+
+async function deleteApp() {
+  if (!confirm(`App "${props.app.name}" wirklich löschen?`)) return
+  deleting.value = true
+  try {
+    await $fetch(`${config.public.apiBase}/api/apps/${props.app.id}`, {
+      method: 'DELETE',
+    })
+    emit('deleted', props.app.id)
+  } catch (err) {
+    alert(`Fehler beim Löschen: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    deleting.value = false
+  }
+}
 </script>

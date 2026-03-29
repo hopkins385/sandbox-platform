@@ -1,5 +1,6 @@
 services:
   sandbox:
+    container_name: sandbox-platform-sandbox
     build:
       context: .
       dockerfile: docker/sandbox-image/Dockerfile

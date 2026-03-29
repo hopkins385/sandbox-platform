@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1774785959267,
+      "tag": "0000_jazzy_omega_flight",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1774787840714,
+      "tag": "0001_big_drax",
+      "breakpoints": true
+    }
+  ]
+}
