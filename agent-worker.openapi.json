@@ -2,11 +2,14 @@
   "openapi": "3.0.3",
   "info": {
     "title": "agent-worker",
-    "version": "1.0.0",
-    "description": "HTTP API exposed by the agent-worker inside each sandbox container."
+    "version": "2.0.0",
+    "description": "HTTP API exposed by the agent-worker inside each sandbox container. The agent worker communicates with the orchestrator via WebSocket; this HTTP API is limited to health checks and the initial connection trigger."
   },
   "servers": [
-    { "url": "http://localhost:4001", "description": "Local sandbox container" }
+    {
+      "url": "http://localhost:4001",
+      "description": "Local sandbox container"
+    }
   ],
   "components": {
     "securitySchemes": {
@@ -17,48 +20,26 @@
       }
     },
     "schemas": {
-      "RunRequest": {
+      "ConnectRequest": {
         "type": "object",
-        "required": ["runId", "prompt"],
+        "required": [
+          "sessionId"
+        ],
         "properties": {
-          "runId": { "type": "string", "pattern": "^[\\w-]{1,128}$", "example": "test-1" },
-          "prompt": { "type": "string", "example": "Create a hello world HTML page at /app/index.html" },
-          "cwd": { "type": "string", "default": "/app", "example": "/app" }
-        }
-      },
-      "AnswerRequest": {
-        "type": "object",
-        "required": ["runId", "answers"],
-        "properties": {
-          "runId": { "type": "string", "example": "test-1" },
-          "answers": {
-            "type": "object",
-            "additionalProperties": { "type": "string" },
-            "example": { "What framework should I use?": "Vanilla HTML, no framework" }
-          }
-        }
-      },
-      "CancelRequest": {
-        "type": "object",
-        "required": ["runId"],
-        "properties": {
-          "runId": { "type": "string", "example": "test-1" }
-        }
-      },
-      "SseEvent": {
-        "type": "object",
-        "required": ["type", "content"],
-        "properties": {
-          "type": {
+          "sessionId": {
             "type": "string",
-            "enum": ["text", "status", "screenshot", "question", "result", "error", "done"]
-          },
-          "content": { "type": "string" }
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          }
         }
       }
     }
   },
-  "security": [{ "bearerAuth": [] }],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "paths": {
     "/health": {
       "get": {
@@ -70,83 +51,47 @@
             "description": "Worker is healthy",
             "content": {
               "application/json": {
-                "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } },
-                "example": { "ok": true }
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true
+                }
               }
             }
           }
         }
       }
     },
-    "/run": {
+    "/connect": {
       "post": {
-        "summary": "Start an agent run (SSE stream)",
-        "description": "Streams Server-Sent Events. Each event data field is a JSON-encoded SseEvent. The stream ends with a done event.",
+        "summary": "Connect worker to orchestrator session",
+        "description": "Instructs the worker to open a WebSocket connection to the orchestrator for the given session. The call returns immediately (fire-and-forget); the actual connection is established asynchronously. The worker authenticates on the WebSocket channel by sending { type: 'auth', token: WORKER_SECRET } as the first message.",
         "requestBody": {
           "required": true,
           "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/RunRequest" } }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "SSE stream of agent events",
-            "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/SseEvent" } } }
-          },
-          "400": { "description": "Invalid runId or cwd" },
-          "401": { "description": "Missing or invalid WORKER_SECRET" }
-        }
-      }
-    },
-    "/answer": {
-      "post": {
-        "summary": "Answer an AskUserQuestion",
-        "description": "Unblocks a paused run waiting for user input.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/AnswerRequest" } }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Answer delivered",
-            "content": {
-              "application/json": {
-                "schema": { "type": "object", "properties": { "delivered": { "type": "boolean" } } },
-                "example": { "delivered": true }
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectRequest"
               }
             }
-          },
-          "404": {
-            "description": "No pending question for this runId",
-            "content": { "application/json": { "example": { "delivered": false } } }
-          },
-          "401": { "description": "Missing or invalid WORKER_SECRET" }
-        }
-      }
-    },
-    "/cancel": {
-      "post": {
-        "summary": "Cancel an active run",
-        "description": "Aborts the SSE stream for the given runId.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/CancelRequest" } }
           }
         },
         "responses": {
-          "200": {
-            "description": "Run cancelled",
-            "content": {
-              "application/json": {
-                "schema": { "type": "object", "properties": { "cancelled": { "type": "boolean" } } },
-                "example": { "cancelled": true }
-              }
-            }
+          "204": {
+            "description": "Connection initiated"
           },
-          "401": { "description": "Missing or invalid WORKER_SECRET" }
+          "400": {
+            "description": "Invalid sessionId"
+          },
+          "401": {
+            "description": "Missing or invalid WORKER_SECRET"
+          }
         }
       }
     }

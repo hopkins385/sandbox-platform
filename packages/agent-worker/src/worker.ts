@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import { Hono } from "hono";
-import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@sandbox/logger";
-import type { SendMessageResponse } from "@sandbox/types";
+import type { SendMessageResponse, WsClientMessage } from "@sandbox/types";
 
 logger.info(`[agent-worker] Starting agent worker...`);
 
@@ -29,10 +28,13 @@ if (!WORKER_SECRET && process.env.NODE_ENV === "production") {
 if (!WORKER_SECRET) {
   logger.warn(
     "[agent-worker] WARNING: WORKER_SECRET is not set — " +
-      "/run, /answer, and /cancel are unauthenticated. " +
+      "/connect is unauthenticated. " +
       "Set WORKER_SECRET to a strong random value in production.",
   );
 }
+
+const ORCHESTRATOR_URL =
+  process.env.ORCHESTRATOR_URL ?? "http://orchestrator:4000";
 
 const app = new Hono();
 
@@ -48,7 +50,7 @@ app.use("*", async (c, next) => {
   return next();
 });
 
-// Per-run pending answer resolvers keyed by runId
+// Per-session pending answer resolvers keyed by sessionId
 const pendingAnswers = new Map<
   string,
   (answers: Record<string, string>) => void
@@ -56,13 +58,13 @@ const pendingAnswers = new Map<
 
 const ANSWER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-function waitForAnswer(runId: string): Promise<Record<string, string>> {
+function waitForAnswer(sessionId: string): Promise<Record<string, string>> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      pendingAnswers.delete(runId);
-      reject(new Error(`Answer timeout for run ${runId}`));
+      pendingAnswers.delete(sessionId);
+      reject(new Error(`Answer timeout for session ${sessionId}`));
     }, ANSWER_TIMEOUT_MS);
-    pendingAnswers.set(runId, (answers) => {
+    pendingAnswers.set(sessionId, (answers) => {
       clearTimeout(timer);
       resolve(answers);
     });
@@ -72,48 +74,156 @@ function waitForAnswer(runId: string): Promise<Record<string, string>> {
 // GET /health
 app.get("/health", (c) => c.json({ ok: true }));
 
-// POST /run  { prompt, cwd, runId }
-// Streams SendMessageResponse events as SSE
-app.post("/run", async (c) => {
-  const {
-    prompt,
-    cwd = "/app",
-    runId,
-  } = await c.req.json<{
-    prompt: string;
-    cwd?: string;
-    runId: string;
-  }>();
-
-  logger.info(
-    `[agent-worker] Received /run request: runId=${runId} cwd=${cwd}`,
+// POST /connect  { sessionId }
+// Connects this worker to the orchestrator WebSocket channel for the given session.
+// Fire-and-forget: returns 204 immediately and connects in the background.
+app.post("/connect", async (c) => {
+  const { sessionId } = await c.req.json<{ sessionId: string }>();
+  if (!sessionId || typeof sessionId !== "string") {
+    return c.text("Invalid sessionId", 400);
+  }
+  connectToOrchestrator(sessionId).catch((err) =>
+    logger.error(
+      `[agent-worker] Unexpected WS error for session ${sessionId}:`,
+      err,
+    ),
   );
+  return c.body(null, 204);
+});
 
-  // Validate inputs at the boundary before they reach the agent or filesystem.
-  if (!/^[\w-]{1,128}$/.test(runId)) {
-    return c.text("Invalid runId", 400);
-  }
-  // Restrict cwd to the app directory to prevent path traversal.
-  if (!cwd.startsWith("/app")) {
-    return c.text("Invalid cwd: must be within /app", 400);
+// Connects to the orchestrator WebSocket for the given session, authenticates,
+// then handles inbound WsClientMessages and emits SendMessageResponse frames.
+async function connectToOrchestrator(sessionId: string): Promise<void> {
+  const wsUrl =
+    ORCHESTRATOR_URL.replace(/^http/, "ws") + `/api/sessions/ws/${sessionId}`;
+
+  const MAX_RETRIES = 8;
+  const BASE_DELAY_MS = 500;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const connected = await attemptWsConnection(sessionId, wsUrl);
+    if (connected) return;
+
+    if (attempt < MAX_RETRIES) {
+      const delay = BASE_DELAY_MS * 2 ** (attempt - 1); // 500ms, 1s, 2s, 4s …
+      logger.warn(
+        `[agent-worker] WS connect failed for session ${sessionId} (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay}ms...`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
   }
 
-  return streamSSE(c, async (stream) => {
-    const emit = async (msg: SendMessageResponse) => {
-      await stream.writeSSE({ data: JSON.stringify(msg) });
+  logger.error(
+    `[agent-worker] Giving up WS connection for session ${sessionId} after ${MAX_RETRIES} attempts`,
+  );
+}
+
+// Opens a single WebSocket attempt. Resolves true if the connection was opened
+// and subsequently closed (normal lifecycle), false if the connection could not
+// be established at all (error before open).
+function attemptWsConnection(
+  sessionId: string,
+  wsUrl: string,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    logger.info(`[agent-worker] Connecting to orchestrator WS: ${wsUrl}`);
+
+    const ws = new WebSocket(wsUrl);
+    let opened = false;
+
+    // One active AbortController per session for the running agent query
+    let activeAbort: AbortController | null = null;
+
+    const emit = (msg: SendMessageResponse) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msg));
+      }
     };
 
+    ws.addEventListener("open", () => {
+      opened = true;
+      logger.info(
+        `[agent-worker] WS connected to orchestrator for session ${sessionId}`,
+      );
+      // Authenticate as the worker — first message on the channel
+      ws.send(JSON.stringify({ type: "auth", token: WORKER_SECRET }));
+    });
+
+    ws.addEventListener("message", (event) => {
+      let msg: WsClientMessage;
+      try {
+        msg = JSON.parse(event.data as string) as WsClientMessage;
+      } catch {
+        return;
+      }
+
+      if (msg.type === "send") {
+        // Restrict cwd to the app directory to prevent path traversal.
+        const cwd = "/app";
+        runAgent(sessionId, msg.message, cwd, emit, () => activeAbort)
+          .then((abort) => {
+            activeAbort = abort;
+          })
+          .catch((err) =>
+            logger.error(
+              `[agent-worker] Agent run error for session ${sessionId}:`,
+              err,
+            ),
+          );
+      } else if (msg.type === "cancel") {
+        activeAbort?.abort();
+        activeAbort = null;
+      } else if (msg.type === "answer") {
+        const resolve = pendingAnswers.get(sessionId);
+        if (resolve) resolve(msg.answers);
+      } else if (msg.type === "ping") {
+        emit({ type: "pong", content: "" });
+      }
+    });
+
+    ws.addEventListener("close", (event) => {
+      logger.info(
+        `[agent-worker] WS closed for session ${sessionId} — code=${event.code}`,
+      );
+      activeAbort?.abort();
+      activeAbort = null;
+      pendingAnswers.delete(sessionId);
+      resolve(opened); // true = normal close; false = never opened → retry
+    });
+
+    ws.addEventListener("error", (event) => {
+      logger.error(`[agent-worker] WS error for session ${sessionId}:`, event);
+      // close event always fires after error, so resolve() is called there
+    });
+  });
+}
+
+// Runs the agent query for a single message. Returns the AbortController so the
+// caller can cancel it later. The caller must await the returned promise before
+// storing the controller (it resolves with the controller immediately after
+// launching the async work).
+async function runAgent(
+  sessionId: string,
+  prompt: string,
+  cwd: string,
+  emit: (msg: SendMessageResponse) => void,
+  getActiveAbort: () => AbortController | null,
+): Promise<AbortController> {
+  const abort = new AbortController();
+
+  // Launch detached so runAgent resolves with the controller right away
+  (async () => {
     const canUseToolMiddleware = async (
       toolName: string,
       input: Record<string, unknown>,
     ) => {
       if (toolName === "AskUserQuestion") {
-        await emit({
+        emit({
           type: "question",
           content: JSON.stringify(input["questions"]),
         });
-        // Block until /answer is called for this runId (or timeout)
-        const answers = await waitForAnswer(runId);
+        // Block until the browser sends an "answer" message (or timeout)
+        const answers = await waitForAnswer(sessionId);
         return {
           behavior: "allow" as const,
           updatedInput: { questions: input["questions"], answers },
@@ -121,13 +231,6 @@ app.post("/run", async (c) => {
       }
       return { behavior: "allow" as const, updatedInput: input };
     };
-
-    let aborted = false;
-
-    // Allow the orchestrator to cancel this run
-    stream.onAbort(() => {
-      aborted = true;
-    });
 
     try {
       const agentQuery = query({
@@ -138,11 +241,10 @@ app.post("/run", async (c) => {
           model: "claude-sonnet-4-6",
           settingSources: ["user", "project"],
           permissionMode: "acceptEdits",
-          includePartialMessages: true, // Stream partial messages for more responsive UI updates
+          includePartialMessages: true,
           systemPrompt: {
             type: "preset",
-            preset: "claude_code", // Use Claude Code's system prompt
-            // append: "",
+            preset: "claude_code",
           },
           mcpServers: {
             playwright: {
@@ -169,7 +271,7 @@ app.post("/run", async (c) => {
       });
 
       for await (const sdkMessage of agentQuery) {
-        if (aborted) break;
+        if (abort.signal.aborted) break;
         const { type, session_id, uuid } = sdkMessage;
         logger.info(
           `[agent-worker] SDK message: type=${type} session_id=${session_id} uuid=${uuid}`,
@@ -179,7 +281,7 @@ app.post("/run", async (c) => {
             const event = sdkMessage.event;
             if (event.type === "content_block_delta") {
               if (event.delta.type === "text_delta") {
-                await emit({ type: "text_delta", content: event.delta.text });
+                emit({ type: "text_delta", content: event.delta.text });
               }
             }
             break;
@@ -189,7 +291,7 @@ app.post("/run", async (c) => {
               (b: { type: string }) => b.type === "text",
             );
             if (textBlock && textBlock.type === "text") {
-              await emit({ type: "text", content: textBlock.text });
+              emit({ type: "text", content: textBlock.text });
             }
             break;
           }
@@ -205,7 +307,7 @@ app.post("/run", async (c) => {
                 continue;
               for (const inner of block.content) {
                 if (inner.type === "image" && inner.source?.type === "base64") {
-                  await emit({
+                  emit({
                     type: "screenshot",
                     content: `data:${inner.source.media_type};base64,${inner.source.data}`,
                   });
@@ -217,12 +319,12 @@ app.post("/run", async (c) => {
           case "result": {
             if (sdkMessage.subtype !== "success") {
               if (sdkMessage.is_error) {
-                await emit({
+                emit({
                   type: "error",
                   content: `Run failed: ${sdkMessage.errors.map((err) => err).join("; ")}`,
                 });
               } else {
-                await emit({
+                emit({
                   type: "status",
                   content: `Run ended with status: ${sdkMessage.subtype}`,
                 });
@@ -230,7 +332,7 @@ app.post("/run", async (c) => {
               break;
             }
             const totalCost = `Total cost: $${sdkMessage.total_cost_usd}`;
-            await emit({
+            emit({
               type: "result",
               content: JSON.stringify({
                 sessionId: session_id,
@@ -243,38 +345,22 @@ app.post("/run", async (c) => {
         }
       }
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      await emit({ type: "error", content: error });
+      if (!abort.signal.aborted) {
+        const error = err instanceof Error ? err.message : String(err);
+        emit({ type: "error", content: error });
+      }
     } finally {
-      await emit({ type: "done", content: "" });
+      emit({ type: "done", content: "" });
     }
-  });
-});
+  })().catch((err) =>
+    logger.error(
+      `[agent-worker] Unhandled agent error for session ${sessionId}:`,
+      err,
+    ),
+  );
 
-// POST /answer  { runId, answers }
-// Unblocks a canUseTool callback waiting for an AskUserQuestion response
-app.post("/answer", async (c) => {
-  const { runId, answers } = await c.req.json<{
-    runId: string;
-    answers: Record<string, string>;
-  }>();
-  const resolve = pendingAnswers.get(runId);
-  if (!resolve) {
-    return c.json({ delivered: false }, 404);
-  }
-  resolve(answers);
-  return c.json({ delivered: true });
-});
-
-// POST /cancel  { runId }
-// Aborts an active SSE stream by closing the connection
-const activeControllers = new Map<string, AbortController>();
-
-app.post("/cancel", async (c) => {
-  const { runId } = await c.req.json<{ runId: string }>();
-  activeControllers.get(runId)?.abort();
-  return c.json({ cancelled: true });
-});
+  return abort;
+}
 
 const PORT = 4001;
 const server = serve({ fetch: app.fetch, port: PORT }, () => {

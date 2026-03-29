@@ -55,13 +55,14 @@ export async function spawnContainer(appId: string): Promise<void> {
     Env: [
       `WORKER_SECRET=${process.env.WORKER_SECRET ?? ""}`,
       `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY ?? ""}`,
+      `ORCHESTRATOR_URL=${process.env.ORCHESTRATOR_URL ?? "http://orchestrator:4000"}`,
     ],
   });
 
   await container.start();
 
   const { port4001 } = await inspectPorts(appId);
-  await waitForWorker(port4001);
+  await waitForWorker(appId, port4001);
 
   await db
     .update(apps)

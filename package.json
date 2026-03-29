@@ -4,6 +4,7 @@
   "scripts": {
     "dev": "dotenv -c -- turbo dev --filter=!@sandbox/nuxt-starter --filter=!@sandbox/agent-worker",
     "build": "turbo build",
+    "build:sandbox": "./scripts/build-sandbox.sh",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck"
   },

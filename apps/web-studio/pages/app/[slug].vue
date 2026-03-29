@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useElementSize, useWebSocket } from '@vueuse/core'
+import { useElementSize, useThrottleFn, useWebSocket } from '@vueuse/core'
 import type { App, AppListResponse, QuestionItem, SendMessageResponse, WsClientMessage } from '@sandbox/types'
 
 const route = useRoute()
@@ -30,6 +30,7 @@ type ChatMessage = BaseMessage | QuestionMessage
 const messages = ref<ChatMessage[]>([])
 const inputText = ref('')
 const isStreaming = ref(false)
+const workerConnected = ref(false)
 const messagesEl = ref<HTMLElement>()
 const iframeEl = ref<HTMLIFrameElement>()
 const streamingBubbleIdx = ref<number | null>(null)
@@ -42,11 +43,18 @@ const wsUrl = ref<string | undefined>(undefined)
 const { send: wsSend, status: wsStatus } = useWebSocket(wsUrl, {
   immediate: false,
   autoReconnect: false,
+  onConnected(ws) {
+    ws.send(JSON.stringify({ type: 'ping' }))
+  },
   onMessage(_ws, event) {
     try {
       const evt = JSON.parse(event.data as string) as SendMessageResponse
       handleWsEvent(evt)
-      scrollToBottom()
+      if (evt.type === 'text_delta') {
+        throttledScrollToBottom()
+      } else {
+        scrollToBottom()
+      }
     } catch {
       // ignore malformed frames
     }
@@ -92,6 +100,7 @@ onMounted(async () => {
 
     // Connect WebSocket now that we have a sessionId
     const wsBase = config.public.apiBase.replace(/^http/, 'ws')
+    workerConnected.value = false
     wsUrl.value = `${wsBase}/api/sessions/ws/${session.sessionId}`
   } catch (err) {
     sessionError.value = `Sitzung konnte nicht geöffnet werden: ${err instanceof Error ? err.message : String(err)}`
@@ -153,6 +162,16 @@ function handleWsEvent(event: SendMessageResponse) {
       break
     case 'result':
       messages.value.push({ type: 'result', content: event.content })
+      break
+    case 'worker_connected':
+      workerConnected.value = true
+      break
+    case 'pong':
+      workerConnected.value = true
+      break
+    case 'worker_disconnected':
+      workerConnected.value = false
+      isStreaming.value = false
       break
     case 'question':
       try {
@@ -220,6 +239,8 @@ function scrollToBottom() {
     }
   })
 }
+
+const throttledScrollToBottom = useThrottleFn(scrollToBottom, 80)
 
 function reloadPreview() {
   if (iframeEl.value && previewUrl.value) {
@@ -316,6 +337,34 @@ const iframeHeight = computed(() => Math.round(containerHeight.value / zoomLevel
       <!-- Chat Panel -->
       <div class="flex flex-col border-r border-gray-200 bg-white overflow-hidden"
         :style="{ width: chatWidthPct + '%' }">
+        <!-- Status bar -->
+        <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-100 bg-gray-50 text-xs text-gray-500">
+          <div>Online:</div>
+          <!-- Browser ↔ orchestrator WS -->
+          <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full flex-shrink-0" :class="{
+              'bg-emerald-500': wsStatus === 'OPEN',
+              'bg-amber-400 animate-pulse': wsStatus === 'CONNECTING',
+              'bg-red-400': wsStatus === 'CLOSED',
+            }" />
+            <span v-if="wsStatus === 'OPEN'">Me</span>
+            <span v-else-if="wsStatus === 'CONNECTING'">Me Connecting…</span>
+            <span v-else>Me Disconnected</span>
+          </span>
+          <span class="text-gray-200">|</span>
+          <!-- Worker WS -->
+          <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full flex-shrink-0" :class="{
+              'bg-emerald-500': workerConnected,
+              'bg-amber-400 animate-pulse': wsStatus === 'OPEN' && !workerConnected,
+              'bg-red-400': wsStatus !== 'OPEN' && !workerConnected,
+            }" />
+            <span v-if="workerConnected">AI Agent</span>
+            <span v-else-if="wsStatus === 'OPEN'">AI Agent connecting…</span>
+            <span v-else>AI Agent offline</span>
+          </span>
+        </div>
+
         <!-- Messages -->
         <div ref="messagesEl" class="flex-1 overflow-y-auto p-4 space-y-3">
           <div v-if="messages.length === 0" class="text-center text-gray-400 text-sm mt-8">

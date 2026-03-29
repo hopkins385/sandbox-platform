@@ -14,11 +14,18 @@ import type {
 } from "@sandbox/types";
 import { logger } from "@sandbox/logger";
 
+// Minimal interface for a connected WS peer so we don't depend on a specific WS class
+interface WsPeer {
+  send(data: string): void;
+}
+
 interface SessionRecord {
   id: string;
   appId: string;
   port4001: number;
   createdAt: string;
+  browserWs: WsPeer | null;
+  workerWs: WsPeer | null;
 }
 
 const sessionStore = new Map<string, SessionRecord>();
@@ -44,7 +51,24 @@ export function createSessionsRouter(upgradeWebSocket: UpgradeWebSocket) {
       appId: record.id,
       port4001,
       createdAt: new Date().toISOString(),
+      browserWs: null,
+      workerWs: null,
     });
+
+    // Tell the worker to connect back to us on this session's WS channel
+    fetch(`${workerUrl(record.id, port4001)}/connect`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...workerAuthHeaders(),
+      },
+      body: JSON.stringify({ sessionId }),
+    }).catch((err) =>
+      logger.warn(
+        `[orchestrator] /connect call failed for session ${sessionId}:`,
+        err,
+      ),
+    );
 
     const response: SessionOpenResponse = {
       sessionId,
@@ -54,166 +78,149 @@ export function createSessionsRouter(upgradeWebSocket: UpgradeWebSocket) {
     return c.json(response);
   });
 
-  // GET /ws/:sessionId — WebSocket endpoint for streaming agent interactions
+  // GET /ws/:sessionId — WebSocket endpoint for both the browser and the worker.
+  // The first message determines the peer role:
+  //   - Worker sends: { type: "auth", token: WORKER_SECRET }
+  //   - Browser sends its first WsClientMessage directly (no auth step)
+  // After identification all messages are forwarded to the other peer.
   router.get(
     "/ws/:sessionId",
     upgradeWebSocket((c) => {
       const sessionId = c.req.param("sessionId") ?? "";
-
-      // Tracks the active run so it can be aborted on browser disconnect or cancel
-      let activeAbort: AbortController | null = null;
-
-      const emit = (
-        ws: { send: (data: string) => void },
-        msg: SendMessageResponse,
-      ) => {
-        ws.send(JSON.stringify(msg));
-      };
-
-      // Runs the worker SSE stream detached from onMessage so the handler
-      // returns immediately. The AbortController lets onClose/cancel kill it.
-      async function pipeWorkerRun(
-        ws: { send: (data: string) => void },
-        session: SessionRecord,
-        prompt: string,
-      ) {
-        const abort = new AbortController();
-        activeAbort = abort;
-
-        let workerRes: Response;
-        try {
-          workerRes = await fetch(`${workerUrl(session.port4001)}/run`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "text/event-stream",
-              ...workerAuthHeaders(),
-            },
-            body: JSON.stringify({ runId: sessionId, prompt }),
-            signal: abort.signal,
-          });
-        } catch (err) {
-          if ((err as Error).name === "AbortError") return;
-          emit(ws, {
-            type: "error",
-            content: `Worker unreachable: ${err instanceof Error ? err.message : String(err)}`,
-          });
-          return;
-        }
-
-        if (!workerRes.ok || !workerRes.body) {
-          emit(ws, { type: "error", content: "Worker request failed" });
-          return;
-        }
-
-        const reader = workerRes.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() ?? "";
-            for (const line of lines) {
-              if (!line.startsWith("data:")) continue;
-              const data = line.slice(5).trim();
-              if (!data) continue;
-              try {
-                emit(ws, JSON.parse(data) as SendMessageResponse);
-              } catch {
-                // skip malformed frames
-              }
-            }
-          }
-          if (buffer.startsWith("data:")) {
-            const data = buffer.slice(5).trim();
-            if (data) {
-              try {
-                emit(ws, JSON.parse(data) as SendMessageResponse);
-              } catch {
-                // ignore
-              }
-            }
-          }
-        } catch (err) {
-          if ((err as Error).name !== "AbortError") {
-            emit(ws, {
-              type: "error",
-              content: `Stream error: ${err instanceof Error ? err.message : String(err)}`,
-            });
-          }
-        } finally {
-          reader.releaseLock();
-          activeAbort = null;
-        }
-      }
+      let role: "browser" | "worker" | null = null;
 
       return {
         onMessage(event, ws) {
-          let msg: WsClientMessage;
-          try {
-            msg = JSON.parse(event.data as string) as WsClientMessage;
-          } catch {
-            return;
-          }
-
+          const rawData = event.data as string;
           const session = sessionStore.get(sessionId);
+
+          // First message: identify the peer
+          if (role === null) {
+            let firstMsg: Record<string, unknown>;
+            try {
+              firstMsg = JSON.parse(rawData) as Record<string, unknown>;
+            } catch {
+              return;
+            }
+
+            if (
+              firstMsg["type"] === "auth" &&
+              firstMsg["token"] === process.env.WORKER_SECRET
+            ) {
+              role = "worker";
+              if (session) {
+                session.workerWs = ws;
+                session.browserWs?.send(
+                  JSON.stringify({
+                    type: "worker_connected",
+                    content: "",
+                  } satisfies SendMessageResponse),
+                );
+              }
+              logger.info(
+                `[orchestrator] Worker connected for session ${sessionId}`,
+              );
+              return;
+            }
+
+            // Not an auth message — treat as browser
+            role = "browser";
+            if (session) {
+              session.browserWs = ws;
+              // Worker may have connected before the browser WS was established
+              if (session.workerWs) {
+                ws.send(
+                  JSON.stringify({
+                    type: "worker_connected",
+                    content: "",
+                  } satisfies SendMessageResponse),
+                );
+              }
+            }
+            // Fall through to process the message as a browser message
+          }
+
           if (!session) {
-            emit(ws, { type: "error", content: "Session not found" });
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                content: "Session not found",
+              } satisfies SendMessageResponse),
+            );
             return;
           }
 
-          if (msg.type === "send") {
-            logger.info(
-              `[orchestrator] WS send for session ${sessionId}: ${msg.message}`,
-            );
-            // Fire-and-forget — returns immediately, streams in background
-            pipeWorkerRun(ws, session, msg.message).catch((err) =>
-              logger.error(`[orchestrator] Unexpected pipe error:`, err),
-            );
-          } else if (msg.type === "cancel") {
-            activeAbort?.abort();
-            fetch(`${workerUrl(session.port4001)}/cancel`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...workerAuthHeaders(),
-              },
-              body: JSON.stringify({ runId: sessionId }),
-            }).catch((err) =>
-              logger.warn(
-                `[orchestrator] Cancel failed for session ${sessionId}:`,
-                err,
-              ),
-            );
-          } else if (msg.type === "answer") {
-            fetch(`${workerUrl(session.port4001)}/answer`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...workerAuthHeaders(),
-              },
-              body: JSON.stringify({ runId: sessionId, answers: msg.answers }),
-            }).catch((err) =>
-              logger.warn(
-                `[orchestrator] Answer failed for session ${sessionId}:`,
-                err,
-              ),
-            );
+          if (role === "browser") {
+            let msg: WsClientMessage;
+            try {
+              msg = JSON.parse(rawData) as WsClientMessage;
+            } catch {
+              return;
+            }
+
+            if (msg.type === "ping") {
+              // Silently forward to worker if connected; ignore otherwise
+              // (worker_connected will arrive when the worker joins)
+              session.workerWs?.send(rawData);
+              return;
+            }
+
+            // Forward browser → worker
+            if (!session.workerWs) {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  content: "AI Agent not connected",
+                } satisfies SendMessageResponse),
+              );
+              return;
+            }
+            if (msg.type === "send") {
+              logger.info(
+                `[orchestrator] Browser send for session ${sessionId}: ${msg.message}`,
+              );
+            }
+            session.workerWs.send(rawData);
+          } else {
+            // role === "worker": forward worker → browser
+            if (session.browserWs) {
+              session.browserWs.send(rawData);
+            }
           }
         },
 
         onClose() {
-          logger.debug(`[orchestrator] WS closed for session ${sessionId}`);
-          // Abort any active run when the browser disconnects
-          activeAbort?.abort();
+          const session = sessionStore.get(sessionId);
+          if (role === "browser") {
+            logger.debug(
+              `[orchestrator] Browser WS closed for session ${sessionId}`,
+            );
+            if (session) {
+              // Tell the worker to cancel any active run
+              session.workerWs?.send(
+                JSON.stringify({ type: "cancel" } satisfies WsClientMessage),
+              );
+              session.browserWs = null;
+            }
+          } else if (role === "worker") {
+            logger.debug(
+              `[orchestrator] Worker WS closed for session ${sessionId}`,
+            );
+            if (session) {
+              session.browserWs?.send(
+                JSON.stringify({
+                  type: "worker_disconnected",
+                  content: "",
+                } satisfies SendMessageResponse),
+              );
+              session.workerWs = null;
+            }
+          }
         },
 
         onError(event) {
           logger.error(
-            `[orchestrator] WS error for session ${sessionId}:`,
+            `[orchestrator] WS error for session ${sessionId} (${role ?? "unknown"}):`,
             event,
           );
         },
@@ -224,11 +231,4 @@ export function createSessionsRouter(upgradeWebSocket: UpgradeWebSocket) {
   router.post("/close", (c) => c.json({ closed: true }));
 
   return router;
-}
-
-interface SessionRecord {
-  id: string;
-  appId: string;
-  port4001: number;
-  createdAt: string;
 }

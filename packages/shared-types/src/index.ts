@@ -39,11 +39,6 @@ export interface SessionOpenResponse {
   previewUrl: string;
 }
 
-export interface SendMessageRequest {
-  sessionId: string;
-  message: string;
-}
-
 export interface QuestionItem {
   question: string;
   header: string;
@@ -60,29 +55,20 @@ export interface SendMessageResponse {
     | "done"
     | "screenshot"
     | "question"
-    | "result";
+    | "result"
+    | "worker_connected"
+    | "worker_disconnected"
+    | "pong";
   content: string; // for "question": JSON.stringify(QuestionItem[])
 }
 
-export interface AnswerMessageRequest {
+export interface WorkerConnectRequest {
   sessionId: string;
-  answers: Record<string, string>; // question text -> selected label(s)
-}
-
-export interface AnswerMessageResponse {
-  delivered: boolean;
-}
-
-export interface CancelMessageRequest {
-  sessionId: string;
-}
-
-export interface CancelMessageResponse {
-  cancelled: boolean;
 }
 
 // WebSocket client → server message types
 export type WsClientMessage =
   | { type: "send"; message: string }
   | { type: "cancel" }
-  | { type: "answer"; answers: Record<string, string> };
+  | { type: "answer"; answers: Record<string, string> }
+  | { type: "ping" };
