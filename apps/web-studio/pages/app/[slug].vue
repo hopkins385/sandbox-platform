@@ -47,6 +47,10 @@ const streamingBubbleIdx = ref<number | null>(null)
 // Per-question answers: msgId -> question -> Set<label>
 const questionAnswers = ref<Record<string, Record<string, Set<string>>>>({})
 
+// Token smoothening (optional) — set to true to fake word-by-word streaming
+const smootheningEnabled = ref(true)
+const smoother = useTokenSmoothening({ wordsPerSecond: 30 })
+
 let socket: Socket | null = null
 
 function connectSocket(sid: string) {
@@ -130,19 +134,32 @@ function handleWsEvent(event: SendMessageResponse) {
   const { type } = event
   switch (type) {
     case 'done':
+      if (smootheningEnabled.value && streamingBubbleIdx.value !== null) {
+        smoother.flush()
+          ; (messages.value[streamingBubbleIdx.value] as BaseMessage).content = smoother.displayedText.value
+      }
       streamingBubbleIdx.value = null
       isStreaming.value = false
       reloadPreview()
       break
     case 'text_delta':
       if (streamingBubbleIdx.value !== null) {
-        (messages.value[streamingBubbleIdx.value] as BaseMessage).content += event.content
+        if (smootheningEnabled.value) {
+          smoother.feed(event.content)
+        } else {
+          (messages.value[streamingBubbleIdx.value] as BaseMessage).content += event.content
+        }
       } else {
-        messages.value.push({ role: 'agent', type: 'text', content: event.content })
+        smoother.reset()
+        messages.value.push({ role: 'agent', type: 'text', content: smootheningEnabled.value ? '' : event.content })
         streamingBubbleIdx.value = messages.value.length - 1
+        if (smootheningEnabled.value) smoother.feed(event.content)
       }
       break
     case 'text':
+      if (smootheningEnabled.value && streamingBubbleIdx.value !== null) {
+        smoother.flush()
+      }
       if (streamingBubbleIdx.value !== null) {
         (messages.value[streamingBubbleIdx.value] as BaseMessage).content = event.content
         streamingBubbleIdx.value = null
@@ -365,6 +382,18 @@ const iframeHeight = computed(() => Math.round(containerHeight.value / zoomLevel
             <span v-else-if="socketConnected">AI Agent connecting…</span>
             <span v-else>AI Agent offline</span>
           </span>
+          <!-- Smoothing toggle -->
+          <button
+            class="ml-auto flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors"
+            :class="smootheningEnabled ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:text-gray-600'"
+            :title="smootheningEnabled ? 'Smoothing on' : 'Smoothing off'"
+            @click="smootheningEnabled = !smootheningEnabled"
+          >
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            Smooth
+          </button>
         </div>
 
         <!-- Messages -->
@@ -398,7 +427,8 @@ const iframeHeight = computed(() => Math.round(containerHeight.value / zoomLevel
             <!-- Agent text message -->
             <div v-else-if="msg.type === 'text'" class="flex justify-start">
               <div v-if="i === streamingBubbleIdx"
-                class="max-w-[75%] bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-tl-sm px-4 py-2.5 whitespace-pre-wrap">{{ (msg as BaseMessage).content }}</div>
+                class="max-w-[75%] bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-tl-sm px-4 py-2.5 whitespace-pre-wrap">
+                {{ smootheningEnabled ? smoother.displayedText : (msg as BaseMessage).content }}</div>
               <div v-else
                 class="bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-tl-sm px-4 py-2.5 prose prose-sm prose-gray !max-w-[75%]"
                 v-html="renderMarkdown((msg as BaseMessage).content)" />
