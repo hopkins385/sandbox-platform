@@ -1,8 +1,8 @@
 import { io } from "socket.io-client";
 import { logger } from "@sandbox/logger";
 import { WORKER_SECRET, ORCHESTRATOR_URL } from "./config.js";
-import { pendingAnswers } from "./answers.js";
-import { AgentRunOptions, runAgent } from "./agent.js";
+import { runAgent } from "./agent.js";
+import { AgentRunOptions } from "@sandbox/types";
 
 export function connectToOrchestrator(sessionId: string): void {
   const socket = io(ORCHESTRATOR_URL, {
@@ -33,9 +33,9 @@ export function connectToOrchestrator(sessionId: string): void {
     };
 
     try {
-      for await (const msg of runAgent(options)) {
+      for await (const msgResponse of runAgent(options)) {
         // TODO: handle disconnects in the middle of a run more gracefully (e.g. by buffering messages and sending them when reconnecting, or by implementing some kind of heartbeat to detect disconnects more quickly)
-        socket.emit(msg.type, msg.content);
+        socket.emit(msgResponse.type, msgResponse.content);
       }
     } catch (err) {
       logger.error(
@@ -58,17 +58,12 @@ export function connectToOrchestrator(sessionId: string): void {
     activeAbort = null;
   });
 
-  socket.on("answer", (answers: Record<string, string>) => {
-    pendingAnswers.get(sessionId)?.(answers);
-  });
-
   socket.on("disconnect", (reason) => {
     logger.info(
       `[agent-worker] Disconnected from orchestrator for session ${sessionId}: ${reason}`,
     );
     activeAbort?.abort();
     activeAbort = null;
-    pendingAnswers.delete(sessionId);
   });
 
   socket.on("connect_error", (err) => {

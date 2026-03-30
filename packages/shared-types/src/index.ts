@@ -72,3 +72,10 @@ export type WsClientMessage =
   | { type: "cancel" }
   | { type: "answer"; answers: Record<string, string> }
   | { type: "ping" };
+
+export interface AgentRunOptions {
+  prompt: string;
+  cwd: string;
+  maxTurns?: number;
+  abortController: AbortController;
+}
