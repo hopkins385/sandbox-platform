@@ -1,9 +1,8 @@
 import { io } from "socket.io-client";
 import { logger } from "@sandbox/logger";
-import type { SendMessageResponse } from "@sandbox/types";
 import { WORKER_SECRET, ORCHESTRATOR_URL } from "./config.js";
 import { pendingAnswers } from "./answers.js";
-import { runAgent } from "./agent.js";
+import { AgentRunOptions, runAgent } from "./agent.js";
 
 export function connectToOrchestrator(sessionId: string): void {
   const socket = io(ORCHESTRATOR_URL, {
@@ -16,20 +15,42 @@ export function connectToOrchestrator(sessionId: string): void {
 
   let activeAbort: AbortController | null = null;
 
-  const emit = (msg: SendMessageResponse) => {
-    if (socket.connected) socket.emit(msg.type, msg.content);
-  };
-
   socket.on("connect", () => {
-    logger.info(`[agent-worker] Connected to orchestrator for session ${sessionId}`);
+    logger.info(
+      `[agent-worker] Connected to orchestrator for session ${sessionId}`,
+    );
   });
 
-  socket.on("send", (message: string) => {
-    runAgent(sessionId, message, "/app", emit)
-      .then((abort) => { activeAbort = abort; })
-      .catch((err) =>
-        logger.error(`[agent-worker] Agent run error for session ${sessionId}:`, err),
+  const handleSendMessage = async (
+    message: string,
+    abortController: AbortController,
+  ) => {
+    const options: AgentRunOptions = {
+      prompt: message,
+      cwd: "/app",
+      maxTurns: 5,
+      abortController,
+    };
+
+    try {
+      for await (const msg of runAgent(options)) {
+        // TODO: handle disconnects in the middle of a run more gracefully (e.g. by buffering messages and sending them when reconnecting, or by implementing some kind of heartbeat to detect disconnects more quickly)
+        socket.emit(msg.type, msg.content);
+      }
+    } catch (err) {
+      logger.error(
+        `[agent-worker] Agent run error for session ${sessionId}:`,
+        err,
       );
+    } finally {
+      activeAbort = null;
+    }
+  };
+
+  socket.on("send", (message: string) => {
+    const abortController = new AbortController();
+    activeAbort = abortController;
+    handleSendMessage(message, abortController);
   });
 
   socket.on("cancel", () => {
@@ -42,13 +63,17 @@ export function connectToOrchestrator(sessionId: string): void {
   });
 
   socket.on("disconnect", (reason) => {
-    logger.info(`[agent-worker] Disconnected from orchestrator for session ${sessionId}: ${reason}`);
+    logger.info(
+      `[agent-worker] Disconnected from orchestrator for session ${sessionId}: ${reason}`,
+    );
     activeAbort?.abort();
     activeAbort = null;
     pendingAnswers.delete(sessionId);
   });
 
   socket.on("connect_error", (err) => {
-    logger.warn(`[agent-worker] Connection error for session ${sessionId}: ${err.message}`);
+    logger.warn(
+      `[agent-worker] Connection error for session ${sessionId}: ${err.message}`,
+    );
   });
 }

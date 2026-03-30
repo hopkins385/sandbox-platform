@@ -9,9 +9,9 @@
       </div>
       <div class="flex items-center gap-2">
         <div class="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center">
-          <span class="text-indigo-700 text-xs font-semibold">A</span>
+          <span class="text-indigo-700 text-xs font-semibold">S</span>
         </div>
-        <span class="text-sm text-gray-600">Anna</span>
+        <span class="text-sm text-gray-600">Sven</span>
       </div>
     </header>
     <main>

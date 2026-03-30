@@ -1,16 +1,19 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@sandbox/logger";
 import type { SendMessageResponse } from "@sandbox/types";
 import { waitForAnswer } from "./answers.js";
 
 async function canUseToolMiddleware(
   sessionId: string,
-  emit: (msg: SendMessageResponse) => void,
+  onQuestion: (msg: SendMessageResponse) => void,
   toolName: string,
   input: Record<string, unknown>,
 ) {
   if (toolName === "AskUserQuestion") {
-    emit({ type: "question", content: JSON.stringify(input["questions"]) });
+    onQuestion({
+      type: "question",
+      content: JSON.stringify(input["questions"]),
+    });
     const answers = await waitForAnswer(sessionId);
     return {
       behavior: "allow" as const,
@@ -20,16 +23,10 @@ async function canUseToolMiddleware(
   return { behavior: "allow" as const, updatedInput: input };
 }
 
-function handleSdkMessage(
-  sdkMessage: Record<string, unknown>,
-  emit: (msg: SendMessageResponse) => void,
-) {
-  const { type, session_id, uuid } = sdkMessage as {
-    type: string;
-    session_id: string;
-    uuid: string;
-    [key: string]: unknown;
-  };
+function* mapSdkMessage(
+  sdkMessage: SDKMessage,
+): Generator<SendMessageResponse> {
+  const { type, session_id, uuid } = sdkMessage;
 
   logger.info(
     `[agent-worker] SDK message: type=${type} session_id=${session_id} uuid=${uuid}`,
@@ -37,57 +34,29 @@ function handleSdkMessage(
 
   switch (type) {
     case "stream_event": {
-      const event = (
-        sdkMessage as {
-          event: { type: string; delta: { type: string; text: string } };
-        }
-      ).event;
+      const event = sdkMessage.event;
       if (
         event.type === "content_block_delta" &&
         event.delta.type === "text_delta"
       ) {
-        emit({ type: "text_delta", content: event.delta.text });
+        yield { type: "text_delta", content: event.delta.text };
       }
       break;
     }
     case "assistant": {
-      const textBlock = (
-        sdkMessage as {
-          message: { content: Array<{ type: string; text?: string }> };
-        }
-      ).message.content.find((b) => b.type === "text");
+      const textBlock = sdkMessage.message.content.find(
+        (b) => b.type === "text",
+      );
       if (textBlock?.type === "text" && textBlock.text) {
-        emit({ type: "text", content: textBlock.text });
+        yield { type: "text", content: textBlock.text };
       }
       break;
     }
     case "user": {
-      const blocks = (
-        sdkMessage as {
-          message: {
-            content: Array<{
-              type: string;
-              content?: Array<{
-                type: string;
-                source?: { type: string; data: string; media_type: string };
-              }>;
-            }>;
-          };
-        }
-      ).message.content;
-
-      for (const block of blocks) {
-        if (block.type !== "tool_result" || !Array.isArray(block.content))
-          continue;
-        for (const inner of block.content) {
-          if (inner.type === "image" && inner.source?.type === "base64") {
-            emit({
-              type: "screenshot",
-              content: `data:${inner.source.media_type};base64,${inner.source.data}`,
-            });
-          }
-        }
-      }
+      logger.info(
+        `[agent-worker] Received user message in SDK output:`,
+        sdkMessage,
+      );
       break;
     }
     case "result": {
@@ -99,26 +68,26 @@ function handleSdkMessage(
       };
       if (result.subtype !== "success") {
         if (result.is_error) {
-          emit({
+          yield {
             type: "error",
             content: `Run failed: ${(result.errors ?? []).map((e) => e).join("; ")}`,
-          });
+          };
         } else {
-          emit({
+          yield {
             type: "status",
             content: `Run ended with status: ${result.subtype}`,
-          });
+          };
         }
         break;
       }
-      emit({
+      yield {
         type: "result",
         content: JSON.stringify({
           sessionId: session_id,
           messageId: uuid,
           totalCost: `Total cost: $${result.total_cost_usd}`,
         }),
-      });
+      };
       break;
     }
     default: {
@@ -130,65 +99,48 @@ function handleSdkMessage(
   }
 }
 
-// Runs the agent query for a single message. Returns the AbortController so the
-// caller can cancel it later. Resolves with the controller immediately after
-// launching the async work.
-export async function runAgent(
-  sessionId: string,
-  prompt: string,
-  cwd: string,
-  emit: (msg: SendMessageResponse) => void,
-): Promise<AbortController> {
-  const abort = new AbortController();
+export interface AgentRunOptions {
+  prompt: string;
+  cwd: string;
+  maxTurns?: number;
+  abortController: AbortController;
+}
 
-  (async () => {
-    try {
-      const agentQuery = query({
-        prompt,
-        options: {
-          cwd,
-          maxTurns: 5,
-          model: "claude-sonnet-4-6",
-          settingSources: ["user", "project"],
-          permissionMode: "acceptEdits",
-          includePartialMessages: true,
-          systemPrompt: { type: "preset", preset: "claude_code" },
-          allowedTools: [
-            "Skill",
-            "Read",
-            "Edit",
-            "Write",
-            "Bash",
-            "Glob",
-            "GrepTool",
-            "AskUserQuestion",
-          ],
-          toolConfig: { askUserQuestion: { previewFormat: "markdown" } },
-          canUseTool: (toolName, input) =>
-            canUseToolMiddleware(sessionId, emit, toolName, input),
-        },
-      });
+export async function* runAgent(
+  options: AgentRunOptions,
+): AsyncGenerator<SendMessageResponse> {
+  const { prompt, cwd, abortController, maxTurns = 5 } = options;
 
-      for await (const sdkMessage of agentQuery) {
-        if (abort.signal.aborted) break;
-        handleSdkMessage(sdkMessage as Record<string, unknown>, emit);
-      }
-    } catch (err) {
-      if (!abort.signal.aborted) {
-        emit({
-          type: "error",
-          content: err instanceof Error ? err.message : String(err),
-        });
-      }
-    } finally {
-      emit({ type: "done", content: "" });
+  const agentQueryWithQuestion = query({
+    prompt,
+    options: {
+      abortController,
+      cwd,
+      maxTurns,
+      model: "claude-sonnet-4-6",
+      settingSources: ["user", "project"],
+      permissionMode: "bypassPermissions",
+      includePartialMessages: true,
+      systemPrompt: { type: "preset", preset: "claude_code" },
+      allowedTools: [
+        "Skill",
+        "Read",
+        "Edit",
+        "Write",
+        "Bash",
+        "Glob",
+        "GrepTool",
+        "AskUserQuestion",
+      ],
+    },
+  });
+
+  try {
+    for await (const sdkMessage of agentQueryWithQuestion) {
+      if (abortController.signal.aborted) break;
+      yield* mapSdkMessage(sdkMessage);
     }
-  })().catch((err) =>
-    logger.error(
-      `[agent-worker] Unhandled agent error for session ${sessionId}:`,
-      err,
-    ),
-  );
-
-  return abort;
+  } finally {
+    yield { type: "done", content: "" };
+  }
 }
