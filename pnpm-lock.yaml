@@ -112,9 +112,6 @@ importers:
       '@vueuse/core':
         specifier: ^13.0.0
         version: 13.9.0(vue@3.5.31(typescript@5.9.3))
-      dompurify:
-        specifier: ^3.3.3
-        version: 3.3.3
       marked:
         specifier: ^17.0.5
         version: 17.0.5
@@ -127,6 +124,9 @@ importers:
       vue:
         specifier: ^3.5.31
         version: 3.5.31(typescript@5.9.3)
+      vue-dompurify-html:
+        specifier: ^5.3.0
+        version: 5.3.0(vue@3.5.31(typescript@5.9.3))
     devDependencies:
       '@sandbox/eslint-config':
         specifier: workspace:*
@@ -140,9 +140,6 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.2.2
         version: 4.2.2(vite@7.3.1(@types/node@24.12.0)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.3))
-      '@types/dompurify':
-        specifier: ^3.2.0
-        version: 3.2.0
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.0
@@ -2095,10 +2092,6 @@ packages:
 
   '@types/dockerode@3.3.47':
     resolution: {integrity: sha512-ShM1mz7rCjdssXt7Xz0u1/R2BJC7piWa3SJpUBiVjCf2A3XNn4cP6pUVaD8bLanpPVVn4IKzJuw3dOvkJ8IbYw==}
-
-  '@types/dompurify@3.2.0':
-    resolution: {integrity: sha512-Fgg31wv9QbLDA0SpTOXO3MaxySc4DKGLi8sna4/Utjo4r3ZRPdCt4UQee8BWr+Q5z21yifghREPJGYaEOEIACg==}
-    deprecated: This is a stub types definition. dompurify provides its own type definitions, so you do not need this installed.
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
@@ -5422,6 +5415,11 @@ packages:
   vue-devtools-stub@0.1.0:
     resolution: {integrity: sha512-RutnB7X8c5hjq39NceArgXg28WZtZpGc3+J16ljMiYnFhKvd8hITxSWQSQ5bvldxMDU6gG5mkxl1MTQLXckVSQ==}
 
+  vue-dompurify-html@5.3.0:
+    resolution: {integrity: sha512-HJQGBHbfSPcb6Mu97McdKbX7TqRHZa6Ji8OCpCNyuHca5QvQZ8IiuwghFPSO8OkSQfqXPNPKFMZdCOrnGGmOSQ==}
+    peerDependencies:
+      vue: ^3.4.36
+
   vue-router@5.0.4:
     resolution: {integrity: sha512-lCqDLCI2+fKVRl2OzXuzdSWmxXFLQRxQbmHugnRpTMyYiT+hNaycV0faqG5FBHDXoYrZ6MQcX87BvbY8mQ20Bg==}
     peerDependencies:
@@ -7459,10 +7457,6 @@ snapshots:
       '@types/docker-modem': 3.0.6
       '@types/node': 24.12.0
       '@types/ssh2': 1.15.5
-
-  '@types/dompurify@3.2.0':
-    dependencies:
-      dompurify: 3.3.3
 
   '@types/estree@1.0.8': {}
 
@@ -11468,6 +11462,11 @@ snapshots:
       ufo: 1.6.3
 
   vue-devtools-stub@0.1.0: {}
+
+  vue-dompurify-html@5.3.0(vue@3.5.31(typescript@5.9.3)):
+    dependencies:
+      dompurify: 3.3.3
+      vue: 3.5.31(typescript@5.9.3)
 
   vue-router@5.0.4(@vue/compiler-sfc@3.5.31)(vue@3.5.31(typescript@5.9.3)):
     dependencies:

@@ -13,18 +13,17 @@
   "dependencies": {
     "@sandbox/types": "workspace:*",
     "@vueuse/core": "^13.0.0",
-    "dompurify": "^3.3.3",
     "marked": "^17.0.5",
     "nuxt": "^4.4.2",
     "socket.io-client": "^4.8.3",
-    "vue": "^3.5.31"
+    "vue": "^3.5.31",
+    "vue-dompurify-html": "^5.3.0"
   },
   "devDependencies": {
     "@sandbox/eslint-config": "workspace:*",
     "@sandbox/tsconfig": "workspace:*",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.2.2",
-    "@types/dompurify": "^3.2.0",
     "@types/node": "^24.0.0",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.7.2"

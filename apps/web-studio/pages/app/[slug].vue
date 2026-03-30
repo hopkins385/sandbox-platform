@@ -2,12 +2,10 @@
 import { useElementSize, useThrottleFn } from '@vueuse/core'
 import { io, type Socket } from 'socket.io-client'
 import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 import type { App, AppListResponse, QuestionItem, SendMessageResponse } from '@sandbox/types'
 
 function renderMarkdown(text: string): string {
-  const html = marked.parse(text, { async: false }) as string
-  return DOMPurify.sanitize(html)
+  return marked.parse(text, { async: false }) as string
 }
 
 const route = useRoute()
@@ -48,7 +46,7 @@ const streamingBubbleIdx = ref<number | null>(null)
 const questionAnswers = ref<Record<string, Record<string, Set<string>>>>({})
 
 // Token smoothening (optional) — set to true to fake word-by-word streaming
-const smootheningEnabled = ref(true)
+const smootheningEnabled = ref(false)
 const smoother = useTokenSmoothening({ wordsPerSecond: 30 })
 
 let socket: Socket | null = null
@@ -383,12 +381,10 @@ const iframeHeight = computed(() => Math.round(containerHeight.value / zoomLevel
             <span v-else>AI Agent offline</span>
           </span>
           <!-- Smoothing toggle -->
-          <button
-            class="ml-auto flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors"
+          <button class="ml-auto flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors"
             :class="smootheningEnabled ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:text-gray-600'"
             :title="smootheningEnabled ? 'Smoothing on' : 'Smoothing off'"
-            @click="smootheningEnabled = !smootheningEnabled"
-          >
+            @click="smootheningEnabled = !smootheningEnabled">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
@@ -431,7 +427,7 @@ const iframeHeight = computed(() => Math.round(containerHeight.value / zoomLevel
                 {{ smootheningEnabled ? smoother.displayedText : (msg as BaseMessage).content }}</div>
               <div v-else
                 class="bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-tl-sm px-4 py-2.5 prose prose-sm prose-gray !max-w-[75%]"
-                v-html="renderMarkdown((msg as BaseMessage).content)" />
+                v-dompurify-html="renderMarkdown((msg as BaseMessage).content)" />
             </div>
 
             <!-- Screenshot message -->
