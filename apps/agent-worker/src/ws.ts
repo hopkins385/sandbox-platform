@@ -14,6 +14,7 @@ export function connectToOrchestrator(sessionId: string): void {
   });
 
   let activeAbort: AbortController | null = null;
+  let sdkSessionId: string | undefined;
 
   socket.on("connect", () => {
     logger.info(
@@ -30,12 +31,17 @@ export function connectToOrchestrator(sessionId: string): void {
       cwd: "/app",
       maxTurns: 5,
       abortController,
+      resumeSessionId: sdkSessionId,
     };
 
     try {
       for await (const msgResponse of runAgent(options)) {
         // TODO: handle disconnects in the middle of a run more gracefully (e.g. by buffering messages and sending them when reconnecting, or by implementing some kind of heartbeat to detect disconnects more quickly)
         socket.emit(msgResponse.type, msgResponse.content);
+        if (msgResponse.type === "result") {
+          const parsed = JSON.parse(msgResponse.content) as { sessionId?: string };
+          if (parsed.sessionId) sdkSessionId = parsed.sessionId;
+        }
       }
     } catch (err) {
       logger.error(

@@ -5,7 +5,7 @@ import type { AgentRunOptions, SendMessageResponse } from "@sandbox/types";
 export async function* runAgent(
   options: AgentRunOptions,
 ): AsyncGenerator<SendMessageResponse> {
-  const { prompt, cwd, abortController, maxTurns = 5 } = options;
+  const { prompt, cwd, abortController, maxTurns = 5, resumeSessionId } = options;
 
   const agentQueryWithQuestion = query({
     prompt,
@@ -13,6 +13,7 @@ export async function* runAgent(
       abortController,
       cwd,
       maxTurns,
+      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       model: "claude-sonnet-4-6",
       settingSources: ["user", "project"],
       permissionMode: "bypassPermissions",

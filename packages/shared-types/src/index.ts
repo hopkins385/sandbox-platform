@@ -78,4 +78,5 @@ export interface AgentRunOptions {
   cwd: string;
   maxTurns?: number;
   abortController: AbortController;
+  resumeSessionId?: string;
 }
