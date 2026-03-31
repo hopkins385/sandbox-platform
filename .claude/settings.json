@@ -8,8 +8,10 @@
     "network": {
       "allowedDomains": [
         "registry.npmjs.org",
-        "api.anthropic.com"
+        "api.anthropic.com",
+        "github.com"
       ]
-    }
+    },
+    "excludedCommands": ["docker"]
   }
 }
