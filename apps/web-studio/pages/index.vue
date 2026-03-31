@@ -5,11 +5,11 @@ import type { App, AppListResponse } from '@sandbox/types'
 const config = useRuntimeConfig()
 const router = useRouter()
 
-const { data, pending, error, refresh } = await useFetch<AppListResponse>(
+const { data, error, refresh } = await useFetch<AppListResponse>(
   `${config.public.apiBase}/api/apps`
 )
 
-useIntervalFn(refresh, 3000)
+useIntervalFn(refresh, 10000)
 
 const showCreateModal = ref(false)
 const newAppName = ref('')
@@ -69,8 +69,7 @@ const visibleCollaborations = computed(() => data.value?.collaborations.filter(a
       </button>
     </div>
 
-    <div v-if="pending" class="text-gray-500 text-sm">Lade Apps...</div>
-    <div v-else-if="error" class="text-red-500 text-sm">Fehler beim Laden der Apps.</div>
+    <div v-if="error" class="text-red-500 text-sm">Fehler beim Laden der Apps.</div>
 
     <template v-else>
       <section v-if="visibleOwned.length">
