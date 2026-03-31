@@ -27,6 +27,8 @@ export async function* runAgent(
         "Glob",
         "GrepTool",
         "AskUserQuestion",
+        "TodoWrite",
+        "WebFetch",
       ],
     },
   });
