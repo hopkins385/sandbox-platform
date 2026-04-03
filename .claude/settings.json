@@ -1,6 +1,17 @@
 {
+  "env": {
+    "DISABLE_TELEMETRY": "1",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_NO_FLICKER": "0"
+  },
+  "model": "sonnet",
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
   "sandbox": {
     "enabled": true,
+    "autoAllowBashIfSandboxed": true,
     "filesystem": {
       "denyWrite": ["/"],
       "allowWrite": [".", "/tmp"]
@@ -13,5 +24,9 @@
       ]
     },
     "excludedCommands": ["docker"]
+  },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true
   }
 }
