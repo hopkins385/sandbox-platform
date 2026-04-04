@@ -35,7 +35,7 @@ Three-tier real-time system:
 ```
 Browser (web-studio :3001)
   ↕ REST + Socket.IO
-Orchestrator (:4000)   ← Express/Socket.IO relay + SQLite (Drizzle/LibSQL)
+Orchestrator (:4000)   ← Hono/Socket.IO relay + SQLite (Drizzle/LibSQL)
   ↕ HTTP POST + Socket.IO
 Agent Worker (:4001)   ← Hono HTTP + Socket.IO client, runs in Docker
   ↕ Anthropic SDK
