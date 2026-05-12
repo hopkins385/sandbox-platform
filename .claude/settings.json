@@ -7,10 +7,10 @@
   },
   "model": "sonnet",
   "permissions": {
-    "defaultMode": "bypassPermissions"
+    "defaultMode": "acceptEdits"
   },
   "sandbox": {
-    "enabled": true,
+    "enabled": false,
     "autoAllowBashIfSandboxed": true,
     "filesystem": {
       "denyWrite": ["/"],
