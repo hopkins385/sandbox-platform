@@ -2,6 +2,8 @@
 
 > [!WARNING]
 > **Not production ready.** This is a proof of concept with known, unresolved security issues, including unauthenticated API access and API keys injected into sandbox containers. Do not deploy this outside a trusted, isolated network, and do not point it at production data. See `docs/ARCHITECTURE_REVIEW.md` for the full list of gaps.
+>
+> If you want to deploy and test this, put it in a trusted and secure network e.g. VPN so only trusted devices can reach the orchestrator at all. That closes the "wide open on the network" exposure, but it's not a substitute for fixing the auth and API-key issues above: anyone on the VPN can still act as anyone else, and a compromised sandbox container can still exfiltrate the API key unless container egress is also restricted.
 
 A proof of concept that lets non-developers build small web apps with Claude Code, safely.
 
