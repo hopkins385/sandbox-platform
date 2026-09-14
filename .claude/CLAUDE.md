@@ -73,7 +73,9 @@ Nuxt 4 SPA (SSR disabled). Key patterns:
 
 ## Key Design Constraints
 
-**Session store is in-memory only.** Sessions are lost if the orchestrator restarts. There is no session persistence in the database.
+Known gaps and race conditions (in-memory-only sessions, unauthenticated browser access, `restartingApps` TOCTOU risk, socket cleanup) are tracked in `docs/ARCHITECTURE_REVIEW.md` — check there for the full write-up before "fixing" any of them as a side effect of unrelated work.
+
+**Session store is in-memory only.** Sessions are lost if the orchestrator restarts.
 
 **Worker auth uses `WORKER_SECRET`.** The orchestrator verifies this header on Socket.IO connection. The browser role is unauthenticated — `x-user-id` header is accepted but not enforced.
 
