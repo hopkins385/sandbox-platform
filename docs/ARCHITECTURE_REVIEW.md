@@ -19,6 +19,12 @@ Agent prompts are passed directly to the Claude SDK without sanitization or leng
 
 ---
 
+## Deployment Threat Model: Is a VPN Enough?
+
+Deploying behind a VPN is the recommended mitigation for the auth gaps above, but it only closes part of the attack surface (it stops opportunistic internet scanners, not a targeted attacker or a compromised credential). See [THREAT_MODEL.md](./THREAT_MODEL.md) for the full breakdown.
+
+---
+
 ## Correctness / Race Conditions
 
 ### In-memory `sessionStore` lost on restart
@@ -90,6 +96,7 @@ Answers are accumulated in `Record<msgId, Record<question, Set<string>>>` and ne
 | Security | Medium | No HTTP API auth |
 | Security | Medium | API key injected into containers |
 | Security | Low | No chat input validation |
+| Security | High | VPN alone doesn't stop a compromised credential (see [THREAT_MODEL.md](./THREAT_MODEL.md)) |
 | Correctness | High | Session store lost on restart |
 | Correctness | Medium | `restartingApps` race condition |
 | Correctness | Medium | Session deleted mid-agent-run |
